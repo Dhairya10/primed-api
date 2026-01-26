@@ -10,6 +10,8 @@ FastAPI-based backend for the Primed app.
 - **UV** - Package manager
 - **Pytest** - Testing framework
 - **Ruff** - Linting and formatting
+- **Opik** - Agent Tracking and Evaluation
+- **LiveKit** - Voice Agent using LiveAPI
 
 ## Prerequisites
 
