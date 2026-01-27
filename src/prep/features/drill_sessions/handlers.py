@@ -2,14 +2,12 @@
 
 import logging
 from datetime import UTC, datetime
-from urllib.parse import parse_qs, urlparse
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException
 
 from src.prep.auth.dependencies import get_current_user
 from src.prep.auth.models import JWTUser
-from src.prep.config import settings
 from src.prep.database import get_query_builder
 from src.prep.features.drill_sessions.services import DrillSessionService
 from src.prep.features.drill_sessions.validators import (
@@ -345,7 +343,6 @@ async def abandon_drill_session(
             abandoned_at=updated_session["metadata"]["abandoned_at"],
         )
 
-
     except HTTPException:
         raise
     except Exception as e:
@@ -354,9 +351,7 @@ async def abandon_drill_session(
 
 
 @router.get("/{session_id}/feedback")
-async def get_session_feedback(
-    session_id: UUID, current_user: JWTUser = Depends(get_current_user)
-):
+async def get_session_feedback(session_id: UUID, current_user: JWTUser = Depends(get_current_user)):
     """
     Get feedback for a completed drill session.
 
@@ -373,7 +368,9 @@ async def get_session_feedback(
         # Fetch session with drill info and feedback
         response = (
             db.client.table("drill_sessions")
-            .select("id, drill_id, user_id, completed_at, feedback, drills(title, products(logo_url))")
+            .select(
+                "id, drill_id, user_id, completed_at, feedback, drills(title, products(logo_url))"
+            )
             .eq("id", str(session_id))
             .execute()
         )

@@ -122,9 +122,9 @@ def test_get_llm_provider_gemini_with_thinking():
             model="gemini-2.5-pro",
             system_prompt="You are helpful",
             enable_thinking=True,
-            thinking_budget=10000,
+            thinking_level="high",
         )
 
         assert isinstance(provider, GeminiProvider)
         assert provider.enable_thinking is True
-        assert provider.thinking_budget == 10000
+        assert provider.thinking_level == "high"

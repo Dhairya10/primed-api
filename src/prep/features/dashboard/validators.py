@@ -123,4 +123,3 @@ class DashboardSessionsResponse(BaseModel):
 
     data: list[DashboardSession]
     total: int
-

@@ -1,6 +1,6 @@
 """Pydantic models for database entities."""
 
-from datetime import date, datetime
+from datetime import datetime
 from enum import Enum
 from typing import Any, Literal
 from uuid import UUID

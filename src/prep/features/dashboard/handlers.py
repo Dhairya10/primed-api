@@ -1,20 +1,13 @@
 """API handlers for dashboard endpoints."""
 
-from uuid import UUID
-
 from fastapi import APIRouter, Depends, HTTPException, Query
 
 from src.prep.auth.dependencies import get_current_user
 from src.prep.auth.models import JWTUser
-from src.prep.config import settings
 from src.prep.database import get_query_builder
 from src.prep.features.dashboard.validators import (
-    DashboardDrill,
-    DashboardPagination,
     DashboardSession,
     DashboardSessionsResponse,
-    DrillAttemptSummary,
-    DrillsDashboardResponse,
 )
 
 router = APIRouter()
@@ -56,9 +49,7 @@ async def get_dashboard_drills(
         user_id = str(current_user.id)
 
         # Get user's profile
-        profile_data = db.list_records(
-            "user_profile", filters={"user_id": user_id}, limit=1
-        )
+        profile_data = db.list_records("user_profile", filters={"user_id": user_id}, limit=1)
 
         if not profile_data:
             raise HTTPException(
@@ -76,7 +67,9 @@ async def get_dashboard_drills(
         # Fetch all completed sessions with drill info
         all_sessions = (
             db.client.table("drill_sessions")
-            .select("id, drill_id, completed_at, skill_evaluations, drills(title, problem_type, products(logo_url))")
+            .select(
+                "id, drill_id, completed_at, skill_evaluations, drills(title, problem_type, products(logo_url))"
+            )
             .eq("user_id", user_id)
             .eq("status", "completed")
             .order("completed_at", desc=True)

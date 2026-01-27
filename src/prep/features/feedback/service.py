@@ -1,6 +1,5 @@
 """Drill feedback evaluation service."""
 
-import json
 import logging
 from datetime import UTC, datetime
 
@@ -11,6 +10,7 @@ from src.prep.database.utils import get_query_builder
 from src.prep.features.feedback.exceptions import FeedbackEvaluationError
 from src.prep.features.feedback.schemas import DrillFeedback, SkillPerformance
 from src.prep.features.home_screen.handlers import invalidate_recommendation_cache
+from src.prep.integrations.opik import opik_track
 
 logger = logging.getLogger(__name__)
 
@@ -26,8 +26,74 @@ class FeedbackService:
 
     def __init__(self) -> None:
         """Initialize feedback service."""
-        pass
+        self._prompt_manager = None
+        if settings.opik_enabled and settings.opik_use_prompts:
+            from src.prep.integrations.opik import get_prompt_manager
 
+            try:
+                self._prompt_manager = get_prompt_manager()
+                logger.info("FeedbackService initialized with Opik Prompt Library")
+            except Exception as e:
+                logger.warning(f"Failed to initialize PromptManager: {e}. Using local prompts.")
+                self._prompt_manager = None
+
+    def _format_prompt_template(
+        self, prompt_name: str, variables: dict[str, str], local_file_path: str | None = None
+    ) -> str:
+        """
+        Format prompt template from Opik or local file.
+
+        Args:
+            prompt_name: Name of prompt in Opik (e.g., 'skill-feedback-evaluation')
+            variables: Dictionary of variables to format the prompt with
+            local_file_path: Path to local prompt file (fallback if Opik disabled)
+
+        Returns:
+            Formatted prompt string
+
+        Raises:
+            FileNotFoundError: If local file not found when Opik disabled
+        """
+        # Try Opik Prompt Library first
+        if self._prompt_manager is not None:
+            try:
+                formatted = self._prompt_manager.format_prompt(
+                    prompt_name=prompt_name, variables=variables
+                )
+                logger.debug(f"Formatted prompt '{prompt_name}' from Opik")
+                return formatted
+            except Exception as e:
+                logger.warning(
+                    f"Failed to format prompt '{prompt_name}' from Opik: {e}. "
+                    "Falling back to local file."
+                )
+
+        # Fallback to local file
+        if local_file_path is None:
+            raise ValueError("local_file_path is required when Opik prompts are not available")
+
+        from pathlib import Path
+
+        prompt_path = Path(local_file_path)
+        prompt_template = prompt_path.read_text()
+
+        # Format using either double-brace or single-brace syntax
+        # Try Python format() first (single brace), then fall back to string replacement
+        try:
+            formatted = prompt_template.format(**variables)
+        except KeyError:
+            # Fallback to double-brace replacement for legacy prompts
+            formatted = prompt_template
+            for key, value in variables.items():
+                formatted = formatted.replace(f"{{{{{key}}}}}", str(value))
+
+        logger.debug(f"Formatted prompt from local file: {local_file_path}")
+        return formatted
+
+    @opik_track(
+        name="drill_session_evaluation",
+        tags=["feedback", "drill-completion"],
+    )
     async def evaluate_drill_session(
         self,
         session_id: str,
@@ -89,9 +155,9 @@ class FeedbackService:
             # 3. Build feedback context
             context = self._build_feedback_context(user_id, total_sessions, db)
 
-            # 4. Generate feedback (LLM call - placeholder for now)
+            # 4. Generate feedback (LLM call with structured output)
             try:
-                feedback_dict = await self._generate_drill_feedback(
+                feedback_dict, feedback_metadata = await self._generate_drill_feedback(
                     drill=drill,
                     skills=skills_list,
                     transcript=transcript,
@@ -121,9 +187,7 @@ class FeedbackService:
             # 6. Validate skills against expected set
             expected_skill_names = {skill["name"] for skill in skills_list}
             valid_skill_evals = [
-                sf
-                for sf in validated_feedback.skills
-                if sf.skill_name in expected_skill_names
+                sf for sf in validated_feedback.skills if sf.skill_name in expected_skill_names
             ]
 
             if len(valid_skill_evals) == 0:
@@ -133,7 +197,9 @@ class FeedbackService:
                     f"Got: {[s.skill_name for s in validated_feedback.skills]}"
                 )
                 db.update_record(
-                    "drill_sessions", session_id, {"status": "completed", "evaluation_error": error_msg}
+                    "drill_sessions",
+                    session_id,
+                    {"status": "completed", "evaluation_error": error_msg},
                 )
                 raise FeedbackEvaluationError(error_msg)
 
@@ -182,9 +248,9 @@ class FeedbackService:
                     }
                 )
 
-            # 8. Generate updated user summary (LLM call - placeholder for now)
+            # 8. Generate updated user summary (LLM call with structured output)
             try:
-                updated_summary = await self._extract_user_summary(
+                updated_summary, _ = await self._extract_user_summary(
                     user_id=user_id,
                     current_summary=context.get("user_summary"),
                     current_feedback=validated_feedback,
@@ -206,10 +272,7 @@ class FeedbackService:
 
             # 2. Store skill evaluations and feedback in session
             feedback_jsonb = validated_feedback.model_dump()
-            feedback_jsonb["evaluation_meta"] = {
-                "model": "placeholder",
-                "evaluated_at": datetime.now(UTC).isoformat(),
-            }
+            feedback_jsonb["evaluation_meta"] = feedback_metadata
 
             db.update_record(
                 "drill_sessions",
@@ -240,9 +303,11 @@ class FeedbackService:
             logger.error(f"Unexpected error during evaluation for session {session_id}: {e}")
             raise FeedbackEvaluationError(f"Unexpected error during evaluation: {e}") from e
 
-    def _build_feedback_context(
-        self, user_id: str, total_sessions: int, db
-    ) -> dict:
+    @opik_track(
+        name="build_feedback_context",
+        tags=["context", "database"],
+    )
+    def _build_feedback_context(self, user_id: str, total_sessions: int, db) -> dict:
         """
         Build context for feedback generation.
 
@@ -269,7 +334,9 @@ class FeedbackService:
                 order_desc=True,
                 limit=10,
             )
-            context["past_evaluations"] = [s.get("feedback") for s in past_sessions if s.get("feedback")]
+            context["past_evaluations"] = [
+                s.get("feedback") for s in past_sessions if s.get("feedback")
+            ]
         else:
             # Get user summary
             profile = db.list_records(
@@ -294,13 +361,18 @@ class FeedbackService:
 
         return context
 
+    @opik_track(
+        name="generate_drill_feedback",
+        tags=["llm", "feedback", "gemini"],
+    )
     async def _generate_drill_feedback(
         self, drill: dict, skills: list[dict], transcript: str, context: dict
-    ) -> dict:
+    ) -> tuple[dict, dict]:
         """
         Generate drill feedback using LLM service with prompt template.
 
-        Uses gemini-2.0-flash-exp for fast, structured feedback generation.
+        Uses gemini-2.0-flash-exp with structured output and thinking mode
+        for fast, validated feedback generation.
 
         Args:
             drill: Drill information
@@ -309,11 +381,9 @@ class FeedbackService:
             context: Feedback context (past evaluations or user summary)
 
         Returns:
-            Feedback dictionary matching DrillFeedback schema
+            Tuple of (feedback dictionary, metadata dict with thought summaries)
         """
-        from pathlib import Path
-
-        from src.prep.services.llm import get_llm_provider
+        from src.prep.services.llm import DrillFeedback, get_llm_provider
 
         try:
             # Build skills with criteria text
@@ -330,53 +400,58 @@ class FeedbackService:
                 past_eval_list = context["past_evaluations"][:3]
                 past_evaluations = "\n".join(
                     [
-                        f"Session {i+1}: {eval.get('summary', 'No summary')}"
+                        f"Session {i + 1}: {eval.get('summary', 'No summary')}"
                         for i, eval in enumerate(past_eval_list)
                     ]
                 )
             elif context.get("user_summary"):
                 past_evaluations = f"User profile: {context['user_summary']}"
 
-            # Load prompt template from file
-            prompt_path = Path("prompts/feedback_product.md")
-            prompt_template = prompt_path.read_text()
-
-            # Compile prompt with variables
-            prompt = (
-                prompt_template.replace("{{drill_name}}", drill.get("title", "Unknown"))
-                .replace("{{drill_description}}", drill.get("description", ""))
-                .replace("{{skills_with_criteria}}", skills_with_criteria)
-                .replace("{{transcript}}", transcript)
-                .replace("{{past_evaluations}}", past_evaluations or "None")
+            # Format prompt using Opik or local file
+            prompt = self._format_prompt_template(
+                prompt_name="skill-feedback-evaluation",
+                variables={
+                    "drill_name": drill.get("title", "Unknown"),
+                    "drill_description": drill.get("description", ""),
+                    "skills_with_criteria": skills_with_criteria,
+                    "transcript": transcript,
+                    "past_evaluations": past_evaluations or "None",
+                },
+                local_file_path="prompts/feedback_product.md",
             )
 
-            # Initialize LLM provider
+            # Initialize LLM provider with structured output
             llm = get_llm_provider(
                 provider_name="gemini",
                 model=settings.llm_feedback_model,
                 system_prompt="You are an expert interview coach providing structured feedback.",
+                response_format=DrillFeedback.model_json_schema(),
+                enable_thinking=True,
+                thinking_level="high",
                 temperature=0.3,
             )
 
             # Generate feedback
             response = await llm.generate(prompt)
 
-            # Parse JSON from response (handle code blocks)
-            import json
-            import re
+            # Parse structured response
+            validated_feedback = DrillFeedback.model_validate_json(response.content)
 
-            content = response.content.strip()
-            json_match = re.search(r"```(?:json)?\s*({.*?})\s*```", content, re.DOTALL)
-            if json_match:
-                content = json_match.group(1)
+            # Extract metadata
+            metadata = {
+                "model": settings.llm_feedback_model,
+                "thinking_level": response.metadata.get("thinking_level"),
+                "thought_summaries": response.metadata.get("thought_summaries", []),
+                "thinking_tokens": response.usage.get("thoughts_token_count", 0),
+                "evaluated_at": datetime.now(UTC).isoformat(),
+            }
 
-            feedback_dict = json.loads(content)
-            return feedback_dict
+            return validated_feedback.model_dump(), metadata
 
         except Exception as e:
             logger.error(f"LLM feedback generation failed: {e}", exc_info=True)
             # Fallback to placeholder
-            return {
+            fallback_feedback = {
                 "summary": f"Completed {drill.get('title', 'drill')}. Performance was evaluated across {len(skills)} skills.",
                 "skills": [
                     {
@@ -388,19 +463,29 @@ class FeedbackService:
                     for skill in skills
                 ],
             }
+            fallback_metadata = {
+                "model": "fallback",
+                "evaluated_at": datetime.now(UTC).isoformat(),
+                "error": str(e),
+            }
+            return fallback_feedback, fallback_metadata
 
-
+    @opik_track(
+        name="extract_user_summary",
+        tags=["llm", "profiling", "gemini"],
+    )
     async def _extract_user_summary(
         self,
         user_id: str,
         current_summary: str | None,
         current_feedback: DrillFeedback,
         total_sessions: int,
-    ) -> str:
+    ) -> tuple[str, dict | None]:
         """
         Extract/update user summary using LLM service with prompt template.
 
-        Uses gemini-2.0-flash-exp for concise summary generation.
+        Uses gemini-2.0-flash-exp with structured output and thinking mode
+        for validated, insightful summary generation.
 
         Args:
             user_id: User ID
@@ -409,11 +494,9 @@ class FeedbackService:
             total_sessions: Total completed sessions
 
         Returns:
-            Updated user summary string
+            Tuple of (updated summary string, metadata dict with thought summaries)
         """
-        from pathlib import Path
-
-        from src.prep.services.llm import get_llm_provider
+        from src.prep.services.llm import UserProfileUpdate, get_llm_provider
 
         try:
             # Build skill evaluations text
@@ -421,34 +504,53 @@ class FeedbackService:
                 [f"- {s.skill_name}: {s.evaluation.value}" for s in current_feedback.skills]
             )
 
-            # Load prompt template from file
-            prompt_path = Path("prompts/user_summary.md")
-            prompt_template = prompt_path.read_text()
-
-            # Compile prompt with variables
-            prompt = (
-                prompt_template.replace("{current_summary}", current_summary or "No previous summary")
-                .replace("{total_sessions}", str(total_sessions))
-                .replace("{session_summary}", current_feedback.summary)
-                .replace("{skill_evaluations}", skill_evaluations)
+            # Format prompt using Opik or local file
+            prompt = self._format_prompt_template(
+                prompt_name="user-summary-extraction",
+                variables={
+                    "current_summary": current_summary or "No previous summary",
+                    "total_sessions": str(total_sessions),
+                    "session_summary": current_feedback.summary,
+                    "skill_evaluations": skill_evaluations,
+                },
+                local_file_path="prompts/user_summary.md",
             )
 
-            # Initialize LLM provider
+            # Initialize LLM provider with structured output
             llm = get_llm_provider(
                 provider_name="gemini",
                 model=settings.llm_feedback_model,
                 system_prompt="You are an AI coach synthesizing user performance data.",
+                response_format=UserProfileUpdate.model_json_schema(),
+                enable_thinking=True,
+                thinking_level="high",
                 temperature=0.4,
             )
 
             # Generate summary
             response = await llm.generate(prompt)
-            return response.content.strip()
+
+            # Parse structured response
+            profile_update = UserProfileUpdate.model_validate_json(response.content)
+
+            # Extract metadata
+            metadata = {
+                "model": settings.llm_feedback_model,
+                "thinking_level": response.metadata.get("thinking_level"),
+                "thought_summaries": response.metadata.get("thought_summaries", []),
+                "thinking_tokens": response.usage.get("thoughts_token_count", 0),
+                "updated_at": datetime.now(UTC).isoformat(),
+            }
+
+            return profile_update.summary, metadata
 
         except Exception as e:
             logger.error(f"User summary extraction failed: {e}", exc_info=True)
             # Fallback: keep existing or create basic one
             if current_summary:
-                return current_summary
+                return current_summary, None
             else:
-                return f"User has completed {total_sessions} sessions. Shows developing skills across various areas."
+                return (
+                    f"User has completed {total_sessions} sessions. Shows developing skills across various areas.",
+                    None,
+                )

@@ -8,7 +8,6 @@ from pydantic import BaseModel
 from src.prep.auth.dependencies import get_current_user
 from src.prep.auth.models import JWTUser
 from src.prep.database import get_query_builder
-from src.prep.database.models import DrillResponse
 
 router = APIRouter()
 
@@ -176,9 +175,7 @@ def _determine_target_skill(user_id: str) -> dict:
 
     exclude_set = set()
     if last_session.data:
-        exclude_set = {
-            e["skill_id"] for e in last_session.data[0].get("skill_evaluations", [])
-        }
+        exclude_set = {e["skill_id"] for e in last_session.data[0].get("skill_evaluations", [])}
 
     # Categorize skills
     red_skills = []
@@ -285,10 +282,11 @@ async def _llm_select_drill(drills: list[dict], target_skill: dict, user_id: str
     """
     from pathlib import Path
 
-    from src.prep.services.llm import get_llm_provider
-    from src.prep.config import settings
-    from src.prep.utils.logging import logger
     from src.prep.db.query_builder import get_query_builder
+    from src.prep.utils.logging import logger
+
+    from src.prep.config import settings
+    from src.prep.services.llm import get_llm_provider
 
     try:
         # Get user summary for context
@@ -299,7 +297,9 @@ async def _llm_select_drill(drills: list[dict], target_skill: dict, user_id: str
         # Determine targeting reason based on skill zone
         zone = target_skill.get("zone")
         if zone == "red":
-            targeting_reason = f"This skill ({target_skill['name']}) needs immediate attention (red zone)."
+            targeting_reason = (
+                f"This skill ({target_skill['name']}) needs immediate attention (red zone)."
+            )
         elif zone == "yellow":
             targeting_reason = f"This skill ({target_skill['name']}) is developing and needs practice (yellow zone)."
         elif not target_skill.get("is_tested"):
@@ -310,7 +310,7 @@ async def _llm_select_drill(drills: list[dict], target_skill: dict, user_id: str
         # Format eligible drills for prompt
         drills_text = "\n\n".join(
             [
-                f"**Drill {i+1}**\n"
+                f"**Drill {i + 1}**\n"
                 f"- ID: {d['id']}\n"
                 f"- Title: {d.get('title', 'Unknown')}\n"
                 f"- Description: {d.get('description', 'No description')}\n"
@@ -411,12 +411,12 @@ def _enrich_drill(drill: dict, user_id: str, db) -> dict:
         .eq("drill_id", drill["id"])
         .execute()
     )
-    
+
     drill["skills_tested"] = [
         {"id": ds["skills"]["id"], "name": ds["skills"]["name"]}
         for ds in skills_tested_response.data
     ]
-    
+
     # Check if user has completed this drill
     drill["is_completed"] = (
         db.count_records(
@@ -429,7 +429,7 @@ def _enrich_drill(drill: dict, user_id: str, db) -> dict:
         )
         > 0
     )
-    
+
     return drill
 
 
@@ -487,9 +487,7 @@ async def get_drills(
         user_id = str(current_user.id)
 
         # Get user's profile
-        profile_data = db.list_records(
-            "user_profile", filters={"user_id": user_id}, limit=1
-        )
+        profile_data = db.list_records("user_profile", filters={"user_id": user_id}, limit=1)
 
         if not profile_data:
             raise HTTPException(

@@ -281,18 +281,14 @@ class SupabaseQueryBuilder:
         """
         if enum_type == "domain_type":
             # Query drills to get all unique domain values
-            records = self.list_records(
-                "drills", columns="domain", filters={"is_active": True}
-            )
+            records = self.list_records("drills", columns="domain", filters={"is_active": True})
             # Get unique domain values, sorted alphabetically
             unique_values = sorted(set(record["domain"] for record in records))
             return unique_values
 
         elif enum_type == "problem_type":
             # Query drills to get all unique problem_type values
-            records = self.list_records(
-                "drills", columns=enum_type, filters={"is_active": True}
-            )
+            records = self.list_records("drills", columns=enum_type, filters={"is_active": True})
             # Get unique problem_type values, sorted alphabetically
             unique_values = sorted(set(record[enum_type] for record in records))
             return unique_values

@@ -6,12 +6,12 @@ from src.prep.auth.dependencies import get_current_user
 from src.prep.auth.models import JWTUser
 from src.prep.database import get_query_builder
 from src.prep.features.skills.schemas import (
+    SessionPerformance,
     SkillHistoryResponse,
     SkillInfo,
     SkillMapResponse,
     SkillScore,
     SkillZone,
-    SessionPerformance,
 )
 
 router = APIRouter()
@@ -93,9 +93,7 @@ async def get_skill_map(
         user_id = str(current_user.id)
 
         # 1. Get all skill scores
-        skill_scores = db.list_records(
-            "user_skill_scores", filters={"user_id": user_id}
-        )
+        skill_scores = db.list_records("user_skill_scores", filters={"user_id": user_id})
         score_map = {s["skill_id"]: s["score"] for s in skill_scores}
 
         # 2. Get all skills
@@ -139,9 +137,7 @@ async def get_skill_map(
         )
 
     except Exception as e:
-        raise HTTPException(
-            status_code=500, detail="Unable to fetch skill map"
-        ) from e
+        raise HTTPException(status_code=500, detail="Unable to fetch skill map") from e
 
 
 @router.get("/skills/me/{skill_id}/history", response_model=SkillHistoryResponse)
@@ -185,11 +181,7 @@ async def get_skill_history(
         for session in all_sessions.data:
             # Find skill evaluation for this skill
             skill_eval = next(
-                (
-                    e
-                    for e in session.get("skill_evaluations", [])
-                    if e.get("skill_id") == skill_id
-                ),
+                (e for e in session.get("skill_evaluations", []) if e.get("skill_id") == skill_id),
                 None,
             )
 
@@ -199,9 +191,7 @@ async def get_skill_history(
 
                 # Format score change with + prefix for positive values
                 score_change = skill_eval.get("score_change", 0)
-                score_change_str = (
-                    f"+{score_change}" if score_change > 0 else str(score_change)
-                )
+                score_change_str = f"+{score_change}" if score_change > 0 else str(score_change)
 
                 sessions.append(
                     SessionPerformance(
@@ -217,7 +207,7 @@ async def get_skill_history(
 
         # 3. Get skill info
         skill = db.get_by_id("skills", skill_id)
-        
+
         if not skill:
             raise HTTPException(status_code=404, detail="Skill not found")
 
@@ -227,9 +217,7 @@ async def get_skill_history(
             columns=["score"],
             limit=1,
         )
-        current_score = (
-            current_score_record[0]["score"] if current_score_record else 0.0
-        )
+        current_score = current_score_record[0]["score"] if current_score_record else 0.0
 
         return SkillHistoryResponse(
             skill=SkillInfo(
@@ -246,6 +234,4 @@ async def get_skill_history(
     except HTTPException:
         raise
     except Exception as e:
-        raise HTTPException(
-            status_code=500, detail="Unable to fetch skill history"
-        ) from e
+        raise HTTPException(status_code=500, detail="Unable to fetch skill history") from e

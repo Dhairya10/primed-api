@@ -27,6 +27,7 @@ venv_linux/
 env/
 ENV/
 .venv
+uv.lock
 
 # IDE
 .vscode/

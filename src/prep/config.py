@@ -40,7 +40,6 @@ class Settings(BaseSettings):
     # Storage Configuration
     storage_bucket_interviews: str = "interviews"
 
-
     # LLM Provider Configuration
     voice_agent_llm_provider: str = "anthropic"
     voice_agent_llm_model: str = "claude-sonnet-4-5-20250929"
@@ -74,6 +73,16 @@ class Settings(BaseSettings):
     # Generation params
     feedback_temperature: float = 0.7
     feedback_max_tokens: int = 4000
+
+    # Opik Configuration
+    opik_api_key: str = ""
+    opik_workspace: str = "primed-hackathon"
+    opik_project_name: str = "primed-skill-eval"
+    opik_enabled: bool = False
+    opik_use_prompts: bool = False  # Use Opik Prompt Library (requires prompts in dashboard)
+
+    # Gemini Feedback Model
+    llm_feedback_model: str = "gemini-2.0-flash-exp"
 
 
 settings = Settings()

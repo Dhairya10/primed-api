@@ -26,9 +26,16 @@ Usage (when needed):
 import os
 
 from src.prep.config import settings
+from src.prep.features.feedback.schemas import DrillFeedback
 from src.prep.services.llm.anthropic import AnthropicProvider
 from src.prep.services.llm.base import BaseLLMProvider
 from src.prep.services.llm.gemini import GeminiProvider
+from src.prep.services.llm.schemas import (
+    DrillRecommendation,
+    SkillEvaluation,
+    SkillScoreChange,
+    UserProfileUpdate,
+)
 
 # Provider registry
 LLM_PROVIDERS: dict[str, type[BaseLLMProvider]] = {
@@ -88,4 +95,14 @@ def get_llm_provider(
     return provider_class(model=model, api_key=api_key, system_prompt=system_prompt, **kwargs)
 
 
-__all__ = ["get_llm_provider", "BaseLLMProvider", "AnthropicProvider", "GeminiProvider"]
+__all__ = [
+    "get_llm_provider",
+    "BaseLLMProvider",
+    "AnthropicProvider",
+    "GeminiProvider",
+    "DrillFeedback",
+    "SkillEvaluation",
+    "SkillScoreChange",
+    "DrillRecommendation",
+    "UserProfileUpdate",
+]
