@@ -4,7 +4,7 @@ import logging
 from datetime import datetime
 from uuid import UUID
 
-from fastapi import Depends, HTTPException, status
+from fastapi import Depends, HTTPException, WebSocket, status
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from jose import JWTError
 
@@ -134,6 +134,64 @@ async def get_current_user(
             event="authentication_failed",
             properties={"error": "jwt_verification_failed", "details": str(e)},
         )
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Invalid authentication credentials",
+        )
+
+
+async def get_current_user_ws(websocket: WebSocket) -> JWTUser:
+    """
+    Extract and validate user data from JWT token for WebSocket connections.
+
+    Accepts a bearer token from the Authorization header or `token` query param.
+    """
+    try:
+        token = None
+        auth_header = websocket.headers.get("authorization")
+        if auth_header and auth_header.lower().startswith("bearer "):
+            token = auth_header.split(" ", 1)[1].strip()
+
+        if not token:
+            token = websocket.query_params.get("token")
+
+        if not token:
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail="Missing authentication token",
+            )
+
+        validator = get_jwt_validator()
+        claims = await validator.verify_token(token)
+
+        user_id = claims.get("sub")
+        email = claims.get("email")
+        user_metadata = claims.get("user_metadata", {})
+
+        if not user_id:
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail="Invalid token: missing user ID",
+            )
+
+        if not email:
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail="Invalid token: missing email",
+            )
+
+        return JWTUser(id=UUID(user_id), email=email, user_metadata=user_metadata)
+
+    except HTTPException:
+        raise
+    except JWTError as e:
+        logger.warning("JWT verification failed: %s", str(e), extra={"error": str(e)})
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Invalid authentication credentials",
+        )
+    except Exception as e:
+        logger.error("Auth failed: %s", str(e), exc_info=True)
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Invalid authentication credentials",

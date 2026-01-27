@@ -49,6 +49,14 @@ class Settings(BaseSettings):
     gemini_api_key: str = "test-gemini-key"
     openai_api_key: str = "test-openai-key"
 
+    # ADK Voice Agent Settings
+    google_api_key: str = ""
+    google_genai_use_vertexai: bool = False
+    gemini_live_model: str = "gemini-2.5-flash-native-audio-preview-12-2025"
+    gemini_live_voice: str = ""
+    voice_session_max_duration_minutes: int = 25
+    voice_session_max_concurrent: int = 50
+
     # Prompt Management (Langfuse)
     prompt_provider_enabled: bool = True
     prompt_provider: str = "langfuse"

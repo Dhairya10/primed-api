@@ -9,6 +9,7 @@ from fastapi import APIRouter, Depends, HTTPException
 from src.prep.auth.dependencies import get_current_user
 from src.prep.auth.models import JWTUser
 from src.prep.database import get_query_builder
+from src.prep.features.feedback.schemas import SessionFeedbackResponse
 from src.prep.features.drill_sessions.services import DrillSessionService
 from src.prep.features.drill_sessions.validators import (
     AbandonDrillSessionRequest,
@@ -350,8 +351,10 @@ async def abandon_drill_session(
         raise HTTPException(status_code=500, detail="Unable to abandon session") from e
 
 
-@router.get("/{session_id}/feedback")
-async def get_session_feedback(session_id: UUID, current_user: JWTUser = Depends(get_current_user)):
+@router.get("/{session_id}/feedback", response_model=SessionFeedbackResponse)
+async def get_session_feedback(
+    session_id: UUID, current_user: JWTUser = Depends(get_current_user)
+) -> SessionFeedbackResponse:
     """
     Get feedback for a completed drill session.
 
@@ -389,8 +392,8 @@ async def get_session_feedback(session_id: UUID, current_user: JWTUser = Depends
         drill = session.get("drills", {})
         product = drill.get("products", {}) if drill else {}
 
-        return {
-            "data": {
+        return SessionFeedbackResponse(
+            data={
                 "session_id": session["id"],
                 "drill_id": session["drill_id"],
                 "drill_title": drill.get("title", "") if drill else "",
@@ -398,7 +401,7 @@ async def get_session_feedback(session_id: UUID, current_user: JWTUser = Depends
                 "completed_at": session.get("completed_at"),
                 "feedback": feedback_data,
             }
-        }
+        )
 
     except HTTPException:
         raise

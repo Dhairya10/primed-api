@@ -5,6 +5,7 @@ from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
+from pydantic import BaseModel
 
 from src.prep.auth import JWKSCache, JWTValidator, set_jwt_validator
 from src.prep.config import settings
@@ -15,6 +16,7 @@ from src.prep.features.library import router as library_router
 from src.prep.features.onboarding import router as onboarding_router
 from src.prep.features.profile import router as profile_router
 from src.prep.features.skills import router as skills_router
+from src.prep.voice import router as voice_router
 
 logger = logging.getLogger(__name__)
 
@@ -114,9 +116,16 @@ app.include_router(onboarding_router, prefix=settings.api_v1_prefix, tags=["onbo
 app.include_router(profile_router, prefix=settings.api_v1_prefix, tags=["profile"])
 app.include_router(library_router, prefix=f"{settings.api_v1_prefix}/library", tags=["library"])
 app.include_router(skills_router, prefix=settings.api_v1_prefix, tags=["skills"])
+app.include_router(voice_router, prefix=settings.api_v1_prefix, tags=["voice"])
 
 
-@app.get("/health")
-async def health_check() -> dict[str, str]:
+class HealthCheckResponse(BaseModel):
+    """Health check response."""
+
+    status: str
+
+
+@app.get("/health", response_model=HealthCheckResponse)
+async def health_check() -> HealthCheckResponse:
     """Health check endpoint."""
-    return {"status": "healthy"}
+    return HealthCheckResponse(status="healthy")
