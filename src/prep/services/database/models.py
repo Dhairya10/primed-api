@@ -2,7 +2,7 @@
 
 from datetime import datetime
 from enum import Enum
-from typing import Any, Literal
+from typing import Any
 from uuid import UUID
 
 from pydantic import BaseModel, Field
@@ -64,10 +64,11 @@ class Drill(BaseModel):
 
     id: UUID
     title: str = Field(max_length=255)
-    display_title: str | None = None
     discipline: DisciplineType
     problem_type: ProblemType | None = None
-    description: str | None = None
+    problem_statement: str | None = None
+    context: str | None = None
+    product_id: UUID | None = None
     is_active: bool = Field(default=False)
     created_at: datetime
     updated_at: datetime
@@ -77,18 +78,12 @@ class DrillCreate(BaseModel):
     """Schema for creating a drill."""
 
     title: str = Field(max_length=255)
-    display_title: str | None = None
-    discipline: DisciplineType
-    is_active: bool = False
-
-
-class DrillResponse(BaseModel):
-    """Drill discovery response for home screen."""
-
-    id: UUID
-    display_title: str
     discipline: DisciplineType
     problem_type: ProblemType | None = None
+    problem_statement: str | None = None
+    context: str | None = None
+    product_id: UUID | None = None
+    is_active: bool = False
 
 
 class DrillSession(BaseModel):
@@ -120,20 +115,23 @@ class SkillTestedInfo(BaseModel):
     name: str
 
 
-class DrillResponse(BaseModel):
-    """Unified drill card response."""
+class DrillBaseResponse(BaseModel):
+    """Shared drill response fields."""
 
     id: UUID
-    title: str  # Use display_title
-    description: str | None = None
+    title: str
     problem_type: ProblemType | None = None
-    discipline: DisciplineType
-    skills_tested: list[SkillTestedInfo] = Field(default_factory=list)
+    skills: list[SkillTestedInfo] = Field(default_factory=list)
+    product_url: str | None = None
+
+
+class DrillHomeResponse(DrillBaseResponse):
+    """Home screen drill response."""
+
+    recommendation_reasoning: str | None = None
+
+
+class DrillResponse(DrillBaseResponse):
+    """Library drill card response."""
+
     is_completed: bool = False
-    recommendation_reasoning: str | None = None  # Only for home screen
-
-
-class DrillSearchResult(DrillResponse):
-    """Search result uses same schema as drill card."""
-
-    type: Literal["problem"] = "problem"

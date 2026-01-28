@@ -1,6 +1,6 @@
 """API handlers for home screen endpoints."""
 
-from typing import Any
+from typing import Generic, TypeVar
 
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
@@ -8,14 +8,17 @@ from pydantic import BaseModel
 from src.prep.services.auth.dependencies import get_current_user
 from src.prep.services.auth.models import JWTUser
 from src.prep.services.database import get_query_builder
+from src.prep.services.database.models import DrillHomeResponse
 
 router = APIRouter()
 
+T = TypeVar("T")
 
-class PaginatedResponse(BaseModel):
+
+class PaginatedResponse(BaseModel, Generic[T]):
     """Standard paginated response wrapper."""
 
-    data: list[Any]
+    data: list[T]
     count: int
     total: int
     limit: int
@@ -23,10 +26,10 @@ class PaginatedResponse(BaseModel):
     has_more: bool
 
 
-class SingleResponse(BaseModel):
+class SingleResponse(BaseModel, Generic[T]):
     """Standard single item response wrapper."""
 
-    data: Any
+    data: T
 
 
 class ErrorResponse(BaseModel):
@@ -55,10 +58,10 @@ GREETING_TEMPLATES = [
 ]
 
 
-@router.get("/greeting", response_model=SingleResponse)
+@router.get("/greeting", response_model=SingleResponse[GreetingResponse])
 async def get_home_greeting(
     current_user: JWTUser = Depends(get_current_user),
-) -> SingleResponse:
+) -> SingleResponse[GreetingResponse]:
     """
     Get personalized home screen greeting.
 
@@ -241,7 +244,10 @@ def _find_eligible_drills(user_id: str, discipline: str, target_skill: dict) -> 
     # Get drills that test target skill
     skill_drills = (
         db.client.table("drill_skills")
-        .select("drill_id, drills(id, title, description, problem_type, discipline, is_active)")
+        .select(
+            "drill_id, drills(id, title, problem_statement, context, "
+            "problem_type, discipline, is_active, product_id)"
+        )
         .eq("skill_id", target_skill["id"])
         .execute()
     )
@@ -314,7 +320,7 @@ async def _llm_select_drill(drills: list[dict], target_skill: dict, user_id: str
                 f"**Drill {i + 1}**\n"
                 f"- ID: {d['id']}\n"
                 f"- Title: {d.get('title', 'Unknown')}\n"
-                f"- Description: {d.get('description', 'No description')}\n"
+                f"- Prompt: {d.get('problem_statement') or d.get('context') or 'No prompt provided'}\n"
                 f"- Problem Type: {d.get('problem_type', 'N/A')}"
                 for i, d in enumerate(drills)
             ]
@@ -403,9 +409,9 @@ def invalidate_recommendation_cache(user_id: str) -> None:
     )
 
 
-def _enrich_drill(drill: dict, user_id: str, db) -> dict:
-    """Enrich drill with skills_tested and is_completed fields."""
-    # Get skills tested for this drill
+def _enrich_drill(drill: dict, db) -> dict:
+    """Enrich drill with skills and product_url fields."""
+    # Get skills for this drill
     skills_tested_response = (
         db.client.table("drill_skills")
         .select("skills(id, name)")
@@ -413,31 +419,43 @@ def _enrich_drill(drill: dict, user_id: str, db) -> dict:
         .execute()
     )
 
-    drill["skills_tested"] = [
+    drill["skills"] = [
         {"id": ds["skills"]["id"], "name": ds["skills"]["name"]}
         for ds in skills_tested_response.data
     ]
 
-    # Check if user has completed this drill
-    drill["is_completed"] = (
-        db.count_records(
-            "drill_sessions",
-            filters={
-                "drill_id": drill["id"],
-                "user_id": user_id,
-                "status": "completed",
-            },
-        )
-        > 0
-    )
+    # Resolve product_url from products.logo_url
+    product_url = None
+    product = drill.get("products")
+    if isinstance(product, dict):
+        product_url = product.get("logo_url")
+    elif drill.get("product_id"):
+        product_row = db.get_by_id("products", drill["product_id"], columns="logo_url")
+        if product_row:
+            product_url = product_row.get("logo_url")
+
+    drill["product_url"] = product_url
 
     return drill
 
 
-@router.get("/drills", response_model=PaginatedResponse)
+def _format_home_drill(drill: dict) -> DrillHomeResponse:
+    """Return validated drill payload for home screen response."""
+    payload = {
+        "id": drill.get("id"),
+        "title": drill.get("title", ""),
+        "problem_type": drill.get("problem_type"),
+        "skills": drill.get("skills", []),
+        "product_url": drill.get("product_url"),
+        "recommendation_reasoning": drill.get("recommendation_reasoning"),
+    }
+    return DrillHomeResponse.model_validate(payload)
+
+
+@router.get("/drills", response_model=SingleResponse[DrillHomeResponse])
 async def get_drills(
     current_user: JWTUser = Depends(get_current_user),
-) -> PaginatedResponse:
+) -> SingleResponse[DrillHomeResponse]:
     """
     Get personalized drill recommendation for the user.
 
@@ -465,20 +483,14 @@ async def get_drills(
 
     Example Response:
         {
-            "data": [
-                {
-                    "id": "uuid",
-                    "display_title": "Practice STAR method responses",
-                    "discipline": "product",
-                    "problem_type": "behavioral",
-                    "recommendation_reasoning": "This drill focuses on Communication. This skill needs immediate attention (red zone)."
-                }
-            ],
-            "count": 1,
-            "total": 1,
-            "limit": 1,
-            "offset": 0,
-            "has_more": false
+            "data": {
+                "id": "uuid",
+                "title": "Practice STAR method responses",
+                "problem_type": "behavioral",
+                "skills": [{"id": "uuid", "name": "Communication"}],
+                "product_url": "https://example.com/logo.png",
+                "recommendation_reasoning": "This drill focuses on Communication. This skill needs immediate attention (red zone)."
+            }
         }
     """
     try:
@@ -508,16 +520,9 @@ async def get_drills(
         if cached:
             drill = db.get_by_id("drills", cached["drill_id"])
             if drill:
-                drill = _enrich_drill(drill, user_id, db)
+                drill = _enrich_drill(drill, db)
                 drill["recommendation_reasoning"] = cached["reasoning"]
-                return PaginatedResponse(
-                    data=[drill],
-                    count=1,
-                    total=1,
-                    limit=1,
-                    offset=0,
-                    has_more=False,
-                )
+                return SingleResponse(data=_format_home_drill(drill))
 
         # Compute new recommendation
         target_skill = _determine_target_skill(user_id)
@@ -539,30 +544,23 @@ async def get_drills(
                     detail="No drills available for your discipline.",
                 )
             selected = random.choice(all_drills)
-            selected = _enrich_drill(selected, user_id, db)
+            selected = _enrich_drill(selected, db)
             selected["recommendation_reasoning"] = "Here's a challenge to keep you sharp!"
         elif len(eligible_drills) == 1:
             selected = eligible_drills[0]
-            selected = _enrich_drill(selected, user_id, db)
+            selected = _enrich_drill(selected, db)
             selected["recommendation_reasoning"] = (
                 f"This drill focuses on {target_skill['name']}, an area for growth."
             )
         else:
             # LLM selection with 2+ options
             selected = await _llm_select_drill(eligible_drills, target_skill, user_id)
-            selected = _enrich_drill(selected, user_id, db)
+            selected = _enrich_drill(selected, db)
 
         # Cache the recommendation
         _cache_recommendation(user_id, selected, target_skill)
 
-        return PaginatedResponse(
-            data=[selected],
-            count=1,
-            total=1,
-            limit=1,
-            offset=0,
-            has_more=False,
-        )
+        return SingleResponse(data=_format_home_drill(selected))
 
     except HTTPException:
         raise
