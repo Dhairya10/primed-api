@@ -5,7 +5,7 @@ from uuid import UUID
 
 from pydantic import BaseModel, Field
 
-from src.prep.database.models import DisciplineType
+from src.prep.services.database.models import DisciplineType
 
 
 class UserProfileRequest(BaseModel):

@@ -4,7 +4,7 @@ from typing import Any
 
 from supabase import Client
 
-from src.prep.database.connection import get_supabase_client
+from src.prep.services.database.connection import get_supabase_client
 
 
 class SupabaseStorageHelper:

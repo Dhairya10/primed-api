@@ -5,7 +5,7 @@ from unittest.mock import AsyncMock, Mock, patch
 import pytest
 from jose import JWTError
 
-from src.prep.auth.jwt_validator import JWTValidator
+from src.prep.services.auth.jwt_validator import JWTValidator
 
 
 @pytest.fixture
@@ -62,7 +62,7 @@ class TestJWTValidator:
         mock_jwks_cache.get_signing_key.return_value = mock_signing_key
 
         # Mock jwt.decode to return claims
-        with patch("src.prep.auth.jwt_validator.jwt") as mock_jwt:
+        with patch("src.prep.services.auth.jwt_validator.jwt") as mock_jwt:
             mock_jwt.get_unverified_header.return_value = {"kid": "key-1", "alg": "RS256"}
             mock_jwt.decode.return_value = {
                 "sub": "user-123",
@@ -81,7 +81,7 @@ class TestJWTValidator:
         """Test that missing kid in JWT header raises JWTError."""
         validator = JWTValidator(jwks_cache=mock_jwks_cache, issuer="https://example.com")
 
-        with patch("src.prep.auth.jwt_validator.jwt") as mock_jwt:
+        with patch("src.prep.services.auth.jwt_validator.jwt") as mock_jwt:
             # Header without kid
             mock_jwt.get_unverified_header.return_value = {"alg": "RS256"}
 
@@ -94,7 +94,7 @@ class TestJWTValidator:
 
         mock_jwks_cache.get_signing_key.return_value = mock_signing_key
 
-        with patch("src.prep.auth.jwt_validator.jwt") as mock_jwt:
+        with patch("src.prep.services.auth.jwt_validator.jwt") as mock_jwt:
             mock_jwt.get_unverified_header.return_value = {"kid": "key-1"}
             mock_jwt.decode.return_value = {
                 "sub": "user-123",
@@ -127,7 +127,7 @@ class TestJWTValidator:
             "iat": 1516239022,
         }
 
-        with patch("src.prep.auth.jwt_validator.jwt") as mock_jwt:
+        with patch("src.prep.services.auth.jwt_validator.jwt") as mock_jwt:
             mock_jwt.get_unverified_header.return_value = {"kid": "key-1"}
             mock_jwt.decode.return_value = expected_claims
 
@@ -143,7 +143,7 @@ class TestJWTValidator:
 
         mock_jwks_cache.get_signing_key.return_value = mock_signing_key
 
-        with patch("src.prep.auth.jwt_validator.jwt") as mock_jwt:
+        with patch("src.prep.services.auth.jwt_validator.jwt") as mock_jwt:
             mock_jwt.get_unverified_header.return_value = {"kid": "key-1"}
             mock_jwt.decode.side_effect = JWTError("Signature verification failed")
 
@@ -162,7 +162,7 @@ class TestJWTValidator:
 
         mock_jwks_cache.get_signing_key.return_value = mock_signing_key
 
-        with patch("src.prep.auth.jwt_validator.jwt") as mock_jwt:
+        with patch("src.prep.services.auth.jwt_validator.jwt") as mock_jwt:
             mock_jwt.get_unverified_header.return_value = {"kid": "key-1"}
             mock_jwt.decode.return_value = {"sub": "user-123"}
 
@@ -180,7 +180,7 @@ class TestJWTValidator:
 
         mock_jwks_cache.get_signing_key.return_value = mock_signing_key
 
-        with patch("src.prep.auth.jwt_validator.jwt") as mock_jwt:
+        with patch("src.prep.services.auth.jwt_validator.jwt") as mock_jwt:
             mock_jwt.get_unverified_header.return_value = {"kid": "key-1"}
             mock_jwt.decode.return_value = {"sub": "user-123"}
 
@@ -198,7 +198,7 @@ class TestJWTValidator:
 
         expected_claims = {"sub": "user-123", "email": "test@example.com"}
 
-        with patch("src.prep.auth.jwt_validator.jwt") as mock_jwt:
+        with patch("src.prep.services.auth.jwt_validator.jwt") as mock_jwt:
             mock_jwt.get_unverified_header.return_value = {"kid": "key-1"}
             mock_jwt.decode.return_value = expected_claims
 
@@ -213,7 +213,7 @@ class TestJWTValidator:
         # Empty cache
         mock_jwks_cache._keys = {}
 
-        with patch("src.prep.auth.jwt_validator.jwt") as mock_jwt:
+        with patch("src.prep.services.auth.jwt_validator.jwt") as mock_jwt:
             mock_jwt.get_unverified_header.return_value = {"kid": "key-1"}
 
             with pytest.raises(RuntimeError, match="JWKS cache not initialized"):

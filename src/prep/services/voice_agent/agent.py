@@ -8,7 +8,7 @@ import os
 from google.adk.agents import Agent
 
 from src.prep.config import settings
-from src.prep.integrations.opik import get_prompt_manager
+from src.prep.services.prompts import get_prompt_manager
 
 logger = logging.getLogger(__name__)
 

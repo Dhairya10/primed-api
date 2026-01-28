@@ -2,9 +2,9 @@
 
 from fastapi import APIRouter, Depends, HTTPException
 
-from src.prep.auth.dependencies import get_current_user
-from src.prep.auth.models import JWTUser
-from src.prep.database import get_query_builder
+from src.prep.services.auth.dependencies import get_current_user
+from src.prep.services.auth.models import JWTUser
+from src.prep.services.database import get_query_builder
 from src.prep.features.skills.schemas import (
     SessionPerformance,
     SkillHistoryResponse,

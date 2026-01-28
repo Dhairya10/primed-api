@@ -5,7 +5,7 @@ from typing import Any
 
 from jose import JWTError, jwt
 
-from src.prep.auth.jwks import JWKSCache
+from src.prep.services.auth.jwks import JWKSCache
 
 logger = logging.getLogger(__name__)
 
@@ -108,6 +108,7 @@ class JWTValidator:
                 algorithms=["RS256", "ES256"],
                 audience=self.audience,
                 issuer=self.issuer,
+                leeway=self.leeway,
                 options={
                     "verify_signature": True,
                     "verify_exp": True,
@@ -117,7 +118,6 @@ class JWTValidator:
                     "verify_iss": True,
                     "require_exp": True,
                     "require_iat": True,
-                    "leeway": self.leeway,
                 },
             )
 
@@ -188,6 +188,7 @@ class JWTValidator:
             algorithms=["RS256", "ES256"],
             audience=self.audience,
             issuer=self.issuer,
+            leeway=self.leeway,
             options={
                 "verify_signature": True,
                 "verify_exp": True,
@@ -197,7 +198,6 @@ class JWTValidator:
                 "verify_iss": True,
                 "require_exp": True,
                 "require_iat": True,
-                "leeway": self.leeway,
             },
         )
 

@@ -12,13 +12,13 @@ from uuid import UUID
 from fastapi import APIRouter, HTTPException, WebSocket, WebSocketDisconnect
 from google.genai import types
 
-from src.prep.auth.dependencies import get_current_user_ws
+from src.prep.services.auth.dependencies import get_current_user_ws
 from src.prep.config import settings
-from src.prep.database import get_query_builder
+from src.prep.services.database import get_query_builder
 from src.prep.features.feedback.service import FeedbackService
-from src.prep.voice.agent import create_interview_agent
-from src.prep.voice.run_config import create_interview_run_config
-from src.prep.voice.session_manager import voice_session_manager
+from src.prep.services.voice_agent.agent import create_interview_agent
+from src.prep.services.voice_agent.run_config import create_interview_run_config
+from src.prep.services.voice_agent.session_manager import voice_session_manager
 
 logger = logging.getLogger(__name__)
 router = APIRouter()

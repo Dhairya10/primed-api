@@ -6,7 +6,7 @@ from unittest.mock import AsyncMock, Mock
 import httpx
 import pytest
 
-from src.prep.auth.jwks import JWKSCache
+from src.prep.services.auth.jwks import JWKSCache
 
 
 @pytest.fixture

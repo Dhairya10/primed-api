@@ -5,29 +5,6 @@ from uuid import uuid4
 import pytest
 from fastapi.testclient import TestClient
 
-from src.prep.database.models import DisciplineType
-
-
-def test_get_interviews_metadata(client: TestClient) -> None:
-    """Test fetching metadata returns disciplines dynamically."""
-    response = client.get("/api/v1/interviews/metadata")
-    assert response.status_code == 200
-    data = response.json()["data"]
-    assert "disciplines" in data
-
-    # Test that disciplines are returned as a list
-    assert isinstance(data["disciplines"], list)
-
-    # Test that we have some values (at least one)
-    assert len(data["disciplines"]) > 0
-
-    # Test that values are strings
-    assert all(isinstance(discipline, str) for discipline in data["disciplines"])
-
-    # Ensure returned values are within allowed enums
-    allowed_disciplines = {discipline.value for discipline in DisciplineType}
-    assert set(data["disciplines"]).issubset(allowed_disciplines)
-
 
 @pytest.mark.skip(reason="Requires Supabase connection and test data")
 def test_get_problems_pagination(client: TestClient) -> None:

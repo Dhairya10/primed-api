@@ -5,7 +5,7 @@ from uuid import UUID
 
 from pydantic import BaseModel, Field
 
-from src.prep.database.models import EvaluationStatus, ProblemType
+from src.prep.services.database.models import EvaluationStatus, ProblemType
 
 
 class AttemptSummary(BaseModel):

@@ -6,11 +6,11 @@ from datetime import UTC, datetime
 from pydantic import ValidationError
 
 from src.prep.config import settings
-from src.prep.database.utils import get_query_builder
+from src.prep.services.database.utils import get_query_builder
 from src.prep.features.feedback.exceptions import FeedbackEvaluationError
 from src.prep.features.feedback.schemas import DrillFeedback, SkillPerformance
 from src.prep.features.home_screen.handlers import invalidate_recommendation_cache
-from src.prep.integrations.opik import opik_track
+from src.prep.services.prompts import opik_track
 
 logger = logging.getLogger(__name__)
 
@@ -28,7 +28,7 @@ class FeedbackService:
         """Initialize feedback service."""
         self._prompt_manager = None
         if settings.opik_enabled and settings.opik_use_prompts:
-            from src.prep.integrations.opik import get_prompt_manager
+            from src.prep.services.prompts import get_prompt_manager
 
             try:
                 self._prompt_manager = get_prompt_manager()

@@ -8,14 +8,14 @@ from fastapi import HTTPException
 from fastapi.security import HTTPAuthorizationCredentials
 from jose import JWTError
 
-from src.prep.auth.dependencies import get_current_user, set_jwt_validator
-from src.prep.auth.models import JWTUser
+from src.prep.services.auth.dependencies import get_current_user, set_jwt_validator
+from src.prep.services.auth.models import JWTUser
 
 
 @pytest.fixture(autouse=True)
 def mock_posthog():
     """Auto-mock PostHogService for all tests."""
-    with patch("src.prep.auth.dependencies.PostHogService") as mock:
+    with patch("src.prep.services.auth.dependencies.PostHogService") as mock:
         mock_instance = Mock()
         mock.return_value = mock_instance
         yield mock_instance
@@ -142,7 +142,7 @@ class TestGetCurrentUser:
         credentials = HTTPAuthorizationCredentials(scheme="Bearer", credentials=valid_jwt_token)
 
         # Act
-        with patch("src.prep.auth.dependencies.logger") as mock_logger:
+        with patch("src.prep.services.auth.dependencies.logger") as mock_logger:
             result = await get_current_user(credentials=credentials)
 
             # Assert
@@ -158,7 +158,7 @@ class TestGetCurrentUser:
         credentials = HTTPAuthorizationCredentials(scheme="Bearer", credentials=valid_jwt_token)
 
         # Act & Assert
-        with patch("src.prep.auth.dependencies.logger") as mock_logger:
+        with patch("src.prep.services.auth.dependencies.logger") as mock_logger:
             with pytest.raises(HTTPException):
                 await get_current_user(credentials=credentials)
 

@@ -8,7 +8,7 @@ from fastapi import Depends, HTTPException, WebSocket, status
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from jose import JWTError
 
-from src.prep.auth.models import JWTUser
+from src.prep.services.auth.models import JWTUser
 from src.prep.services import PostHogService
 
 security = HTTPBearer()

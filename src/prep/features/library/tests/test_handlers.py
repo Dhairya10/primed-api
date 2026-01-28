@@ -380,20 +380,5 @@ class TestLibraryIntegration:
     @pytest.mark.skip(reason="Requires Supabase connection and authentication")
     def test_backward_compatibility(self, client: TestClient) -> None:
         """Test that existing endpoints are unchanged by library feature."""
-        # Home screen interview endpoint
-        response1 = client.get("/api/v1/interviews")
-        assert response1.status_code in [200, 401]
-
-        # Home screen drills endpoint
-        response2 = client.get("/api/v1/drills")
-        assert response2.status_code in [200, 401]
-
-        # Search endpoint
-        response3 = client.get("/api/v1/interviews/search?query=test")
-        assert response3.status_code in [200, 500]
-
-        # Verify search endpoint structure hasn't changed
-        if response3.status_code == 200:
-            data = response3.json()
-            assert "data" in data
-            assert "count" in data
+        response = client.get("/api/v1/drills")
+        assert response.status_code in [200, 401]

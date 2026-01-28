@@ -5,9 +5,9 @@ from typing import Any
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
 
-from src.prep.auth.dependencies import get_current_user
-from src.prep.auth.models import JWTUser
-from src.prep.database import get_query_builder
+from src.prep.services.auth.dependencies import get_current_user
+from src.prep.services.auth.models import JWTUser
+from src.prep.services.database import get_query_builder
 
 router = APIRouter()
 
@@ -41,6 +41,7 @@ class GreetingResponse(BaseModel):
     greeting: str
     user_first_name: str
     session_number: int
+
 
 
 # Greeting templates for random selection

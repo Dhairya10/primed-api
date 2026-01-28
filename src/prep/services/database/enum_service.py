@@ -3,8 +3,8 @@
 import time
 from typing import Any
 
-from src.prep.database.models import DisciplineType
-from src.prep.database.utils import get_query_builder
+from src.prep.services.database.models import DisciplineType
+from src.prep.services.database.utils import get_query_builder
 
 
 class EnumService:

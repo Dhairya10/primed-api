@@ -6,7 +6,7 @@ from uuid import UUID
 
 from fastapi import HTTPException
 
-from src.prep.database import SupabaseQueryBuilder
+from src.prep.services.database import SupabaseQueryBuilder
 
 logger = logging.getLogger(__name__)
 

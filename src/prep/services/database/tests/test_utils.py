@@ -5,7 +5,7 @@ from uuid import uuid4
 
 import pytest
 
-from src.prep.database.utils import (
+from src.prep.services.database.utils import (
     SupabaseQueryBuilder,
     get_query_builder,
 )
@@ -28,7 +28,7 @@ class TestSupabaseQueryBuilder:
 
     def test_get_by_id_found(self, mock_client: MagicMock, sample_id: str) -> None:
         """Test getting record by ID when it exists."""
-        mock_client.table().select().eq().execute.return_value.data = [
+        mock_client.table.return_value.select.return_value.eq.return_value.execute.return_value.data = [
             {"id": sample_id, "title": "Test"}
         ]
 
@@ -62,7 +62,7 @@ class TestSupabaseQueryBuilder:
 
     def test_list_records_with_filters(self, mock_client: MagicMock) -> None:
         """Test listing records with filters."""
-        mock_client.table().select().eq().eq().order().range().execute.return_value.data = [
+        mock_client.table.return_value.select.return_value.eq.return_value.eq.return_value.order.return_value.range.return_value.execute.return_value.data = [
             {"id": "1", "domain": "health_tech"},
             {"id": "2", "domain": "health_tech"},
         ]
@@ -183,7 +183,7 @@ class TestSupabaseQueryBuilder:
 class TestHelperFactory:
     """Tests for helper factory function."""
 
-    @patch("prep.database.utils.get_supabase_client")
+    @patch("src.prep.services.database.utils.get_supabase_client")
     def test_get_query_builder(self, mock_get_client: MagicMock) -> None:
         """Test getting query builder instance."""
         mock_client = MagicMock()

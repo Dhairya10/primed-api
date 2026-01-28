@@ -2,10 +2,10 @@
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 
-from src.prep.auth.dependencies import get_current_user
-from src.prep.auth.models import JWTUser
-from src.prep.database import get_query_builder
-from src.prep.database.models import (
+from src.prep.services.auth.dependencies import get_current_user
+from src.prep.services.auth.models import JWTUser
+from src.prep.services.database import get_query_builder
+from src.prep.services.database.models import (
     DrillSearchResult,
     ProblemType,
 )
