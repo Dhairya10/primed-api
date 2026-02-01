@@ -11,8 +11,8 @@ class SkillPerformance(str, Enum):
     """Skill performance evaluation levels."""
 
     DEMONSTRATED = "Demonstrated"
-    PARTIALLY = "Partially"
-    DID_NOT_DEMONSTRATE = "Did not demonstrate"
+    PARTIAL = "Partial"
+    MISSED = "Missed"
 
 
 class SkillFeedback(BaseModel):

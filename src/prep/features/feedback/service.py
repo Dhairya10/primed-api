@@ -227,8 +227,8 @@ class FeedbackService:
                 # Calculate score change: +1, +0.5, or -1
                 score_change_map = {
                     SkillPerformance.DEMONSTRATED: 1.0,
-                    SkillPerformance.PARTIALLY: 0.5,
-                    SkillPerformance.DID_NOT_DEMONSTRATE: -1.0,
+                    SkillPerformance.PARTIAL: 0.5,
+                    SkillPerformance.MISSED: -1.0,
                 }
                 score_change = score_change_map[skill_feedback.evaluation]
 
@@ -456,7 +456,7 @@ class FeedbackService:
                 "skills": [
                     {
                         "skill_name": skill["name"],
-                        "evaluation": "Partially",
+                        "evaluation": "Partial",
                         "feedback": f"Demonstrated understanding of {skill['name']} with room for improvement.",
                         "improvement_suggestion": f"Practice {skill['name']} in more scenarios.",
                     }

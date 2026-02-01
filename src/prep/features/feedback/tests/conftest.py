@@ -16,7 +16,7 @@ def sample_feedback_dict():
             },
             {
                 "skill_name": "Metrics",
-                "evaluation": "Partially",
+                "evaluation": "Partial",
                 "feedback": "Mentioned KPIs but lacked concrete success metrics.",
                 "improvement_suggestion": "Add specific metrics and explain how you'd measure impact.",
             },

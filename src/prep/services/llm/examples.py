@@ -118,7 +118,7 @@ async def example_user_profile_update():
     Current Summary: [existing user summary]
 
     Session Feedback:
-    - Communication: Partially demonstrated
+    - Communication: Partial
     - Problem Solving: Demonstrated
 
     Transcript highlights:
