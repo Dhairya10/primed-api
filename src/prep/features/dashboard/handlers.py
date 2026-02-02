@@ -2,13 +2,13 @@
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 
-from src.prep.services.auth.dependencies import get_current_user
-from src.prep.services.auth.models import JWTUser
-from src.prep.services.database import get_query_builder
 from src.prep.features.dashboard.validators import (
     DashboardSession,
     DashboardSessionsResponse,
 )
+from src.prep.services.auth.dependencies import get_current_user
+from src.prep.services.auth.models import JWTUser
+from src.prep.services.database import get_query_builder
 
 router = APIRouter()
 

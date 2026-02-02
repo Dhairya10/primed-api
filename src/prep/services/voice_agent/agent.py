@@ -40,18 +40,24 @@ def create_interview_agent(drill_context: dict) -> Agent:
 
     prompt_manager = get_prompt_manager()
 
-    skills_tested = drill_context.get("skills_tested") or []
-    skills_formatted = "\n".join(f"- {skill}" for skill in skills_tested) or "None"
+    # skills_tested = drill_context.get("skills_tested") or []
+    # skills_formatted = "\n".join(f"- {skill}" for skill in skills_tested) or "None"
+    discipline = drill_context.get("discipline", "product")
+
+    if discipline == "product":
+        prompt_name = "voice-agent-product"
+    elif discipline == "design":
+        prompt_name = "voice-agent-design"
+    elif discipline == "marketing":
+        prompt_name = "voice-agent-marketing"
+    else:
+        raise ValueError(f"Invalid discipline: {discipline}")
 
     instruction = prompt_manager.format_prompt(
-        prompt_name="interview-coach-system-prompt",
+        prompt_name=prompt_name,
         variables={
-            "user_name": drill_context.get("user_name", "Candidate"),
-            "discipline": drill_context.get("discipline", "product"),
-            "drill_title": drill_context.get("drill_title", ""),
-            "problem_type": drill_context.get("problem_type") or "",
-            "drill_description": drill_context.get("drill_description", ""),
-            "skills_tested": skills_formatted,
+            "problem_statement": drill_context.get("problem_statement", ""),
+            "context": drill_context.get("context", ""),
         },
     )
 

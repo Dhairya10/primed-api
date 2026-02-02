@@ -21,10 +21,6 @@ class GeminiProvider(BaseLLMProvider):
     - Thinking mode with thinking_level configuration
     - Structured output via response_format
     - Server-side persistence opt-out (store=False)
-
-    Recommended models:
-    - gemini-2.0-flash-exp: Fast, good quality, low cost
-    - gemini-2.5-pro: Best reasoning with thinking mode
     """
 
     _VALID_THINKING_LEVELS = {"minimal", "low", "medium", "high"}
@@ -39,7 +35,6 @@ class GeminiProvider(BaseLLMProvider):
         response_format: dict[str, Any] | None = None,
         response_mime_type: str | None = None,
         store: bool = False,
-        thinking_budget: int | None = None,
         **kwargs,
     ):
         """
@@ -54,7 +49,6 @@ class GeminiProvider(BaseLLMProvider):
             response_format: JSON schema for structured output
             response_mime_type: Mime type for structured responses
             store: Whether to persist interaction server-side
-            thinking_budget: Deprecated; ignored by Interactions API
             **kwargs: Additional config (temperature, max_tokens, etc.)
 
         Raises:
@@ -84,9 +78,6 @@ class GeminiProvider(BaseLLMProvider):
 
         if self.response_format and not self.response_mime_type:
             self.response_mime_type = "application/json"
-
-        if thinking_budget is not None:
-            logger.warning("thinking_budget is ignored; use thinking_level instead.")
 
         logger.info(
             f"Initialized GeminiProvider: model={model}, "

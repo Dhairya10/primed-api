@@ -3,7 +3,7 @@
 from datetime import datetime
 from uuid import UUID
 
-from pydantic import BaseModel, Field
+from pydantic import AliasChoices, BaseModel, Field
 
 
 class CheckDrillEligibilityResponse(BaseModel):
@@ -17,7 +17,10 @@ class CheckDrillEligibilityResponse(BaseModel):
 class DrillSessionStartRequest(BaseModel):
     """Request model for starting a drill session."""
 
-    problem_id: UUID
+    drill_id: UUID = Field(
+        validation_alias=AliasChoices("drill_id", "problem_id"),
+        description="Drill ID to start (accepts legacy problem_id)",
+    )
 
 
 class DrillSessionStartResponse(BaseModel):

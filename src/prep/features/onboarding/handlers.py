@@ -4,15 +4,15 @@ import logging
 
 from fastapi import APIRouter, Depends, HTTPException, status
 
-from src.prep.services.auth.dependencies import get_current_user
-from src.prep.services.auth.models import JWTUser
-from src.prep.services.database import get_query_builder
 from src.prep.features.onboarding.models import (
     UserProfileRequest,
     UserProfileResponse,
     UserProfileUpdateResponse,
 )
 from src.prep.services import PostHogService
+from src.prep.services.auth.dependencies import get_current_user
+from src.prep.services.auth.models import JWTUser
+from src.prep.services.database import get_query_builder
 
 logger = logging.getLogger(__name__)
 

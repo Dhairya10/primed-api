@@ -91,7 +91,7 @@ class DrillSession(BaseModel):
 
     id: UUID
     user_id: UUID
-    problem_id: UUID
+    drill_id: UUID
     status: DrillSessionStatus
     started_at: datetime
     completed_at: datetime | None = None

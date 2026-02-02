@@ -6,10 +6,10 @@ from datetime import UTC, datetime
 from pydantic import ValidationError
 
 from src.prep.config import settings
-from src.prep.services.database.utils import get_query_builder
 from src.prep.features.feedback.exceptions import FeedbackEvaluationError
 from src.prep.features.feedback.schemas import DrillFeedback, SkillPerformance
 from src.prep.features.home_screen.handlers import invalidate_recommendation_cache
+from src.prep.services.database.utils import get_query_builder
 from src.prep.services.prompts import opik_track
 
 logger = logging.getLogger(__name__)
@@ -409,7 +409,7 @@ class FeedbackService:
 
             # Format prompt using Opik or local file
             prompt = self._format_prompt_template(
-                prompt_name="skill-feedback-evaluation",
+                prompt_name="feedback-product",
                 variables={
                     "drill_name": drill.get("title", "Unknown"),
                     "drill_description": drill.get("description", ""),
@@ -428,7 +428,7 @@ class FeedbackService:
                 response_format=DrillFeedback.model_json_schema(),
                 enable_thinking=True,
                 thinking_level="high",
-                temperature=0.3,
+                temperature=0.7,
             )
 
             # Generate feedback
@@ -506,7 +506,7 @@ class FeedbackService:
 
             # Format prompt using Opik or local file
             prompt = self._format_prompt_template(
-                prompt_name="user-summary-extraction",
+                prompt_name="user-summary",
                 variables={
                     "current_summary": current_summary or "No previous summary",
                     "total_sessions": str(total_sessions),
@@ -519,12 +519,12 @@ class FeedbackService:
             # Initialize LLM provider with structured output
             llm = get_llm_provider(
                 provider_name="gemini",
-                model=settings.llm_feedback_model,
+                model=settings.llm_user_summary_model,
                 system_prompt="You are an AI coach synthesizing user performance data.",
                 response_format=UserProfileUpdate.model_json_schema(),
                 enable_thinking=True,
                 thinking_level="high",
-                temperature=0.4,
+                temperature=0.7,
             )
 
             # Generate summary

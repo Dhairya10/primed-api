@@ -2,9 +2,6 @@
 
 from fastapi import APIRouter, Depends, HTTPException
 
-from src.prep.services.auth.dependencies import get_current_user
-from src.prep.services.auth.models import JWTUser
-from src.prep.services.database import get_query_builder
 from src.prep.features.skills.schemas import (
     SessionPerformance,
     SkillHistoryResponse,
@@ -13,6 +10,9 @@ from src.prep.features.skills.schemas import (
     SkillScore,
     SkillZone,
 )
+from src.prep.services.auth.dependencies import get_current_user
+from src.prep.services.auth.models import JWTUser
+from src.prep.services.database import get_query_builder
 
 router = APIRouter()
 

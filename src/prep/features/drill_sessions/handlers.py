@@ -6,10 +6,6 @@ from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException
 
-from src.prep.services.auth.dependencies import get_current_user
-from src.prep.services.auth.models import JWTUser
-from src.prep.services.database import get_query_builder
-from src.prep.features.feedback.schemas import SessionFeedbackResponse
 from src.prep.features.drill_sessions.services import DrillSessionService
 from src.prep.features.drill_sessions.validators import (
     AbandonDrillSessionRequest,
@@ -19,6 +15,10 @@ from src.prep.features.drill_sessions.validators import (
     DrillSessionStartResponse,
     DrillSessionStatusResponse,
 )
+from src.prep.features.feedback.schemas import SessionFeedbackResponse
+from src.prep.services.auth.dependencies import get_current_user
+from src.prep.services.auth.models import JWTUser
+from src.prep.services.database import get_query_builder
 
 logger = logging.getLogger(__name__)
 
@@ -134,9 +134,14 @@ async def start_drill_session(
     """
     try:
         db = get_query_builder()
+        user_id = str(current_user.id)
+        logger.info(
+            "Starting drill session",
+            extra={"user_id": user_id, "drill_id": str(session_data.drill_id)},
+        )
 
         # Get problem statement
-        problem = db.get_by_id("drills", session_data.problem_id)
+        problem = db.get_by_id("drills", session_data.drill_id)
 
         if not problem or not problem.get("is_active", False):
             raise HTTPException(status_code=404, detail="Problem not found or inactive")
@@ -144,9 +149,7 @@ async def start_drill_session(
         problem_discipline = problem.get("discipline")
 
         # Get user profile for decrementing drill count
-        profile_data = db.list_records(
-            "user_profile", filters={"user_id": str(current_user.id)}, limit=1
-        )
+        profile_data = db.list_records("user_profile", filters={"user_id": user_id}, limit=1)
 
         if not profile_data:
             raise HTTPException(
@@ -169,8 +172,8 @@ async def start_drill_session(
 
         # Create drill session (simplified - no voice agent)
         insert_data = {
-            "user_id": str(current_user.id),
-            "problem_id": str(session_data.problem_id),
+            "user_id": user_id,
+            "drill_id": str(session_data.drill_id),
             "status": "in_progress",
             "metadata": {
                 "discipline": problem_discipline,
@@ -192,16 +195,24 @@ async def start_drill_session(
                 {"num_drills": num_drills - 1, "updated_at": "NOW()"},
             )
             logger.info(
-                f"Decremented num_drills for user {current_user.id} from {num_drills} to {num_drills - 1}"
+                "Decremented num_drills",
+                extra={
+                    "user_id": user_id,
+                    "from": num_drills,
+                    "to": num_drills - 1,
+                },
             )
         except Exception as e:
             logger.error(
-                f"Failed to decrement num_drills for user {current_user.id}: {e}",
+                f"Failed to decrement num_drills for user {user_id}: {e}",
                 exc_info=True,
             )
             # Don't fail the request if decrement fails, but log the error
 
-        logger.info(f"Created drill session {session_id} for problem ID {problem['id']}")
+        logger.info(
+            "Created drill session",
+            extra={"session_id": str(session_id), "drill_id": str(problem["id"])},
+        )
 
         # Return session info (no signed URL)
         return DrillSessionStartResponse(
@@ -223,6 +234,14 @@ async def start_drill_session(
     except HTTPException:
         raise
     except Exception as e:
+        logger.error(
+            f"Unable to start drill session: {e}",
+            exc_info=True,
+            extra={
+                "user_id": str(current_user.id),
+                "drill_id": str(session_data.drill_id),
+            },
+        )
         raise HTTPException(
             status_code=500, detail=f"Unable to start drill session: {str(e)}"
         ) from e

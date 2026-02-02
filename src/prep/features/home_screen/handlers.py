@@ -1,5 +1,6 @@
 """API handlers for home screen endpoints."""
 
+import logging
 from typing import Generic, TypeVar
 
 from fastapi import APIRouter, Depends, HTTPException
@@ -9,6 +10,8 @@ from src.prep.services.auth.dependencies import get_current_user
 from src.prep.services.auth.models import JWTUser
 from src.prep.services.database import get_query_builder
 from src.prep.services.database.models import DrillHomeResponse
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter()
 
@@ -44,7 +47,6 @@ class GreetingResponse(BaseModel):
     greeting: str
     user_first_name: str
     session_number: int
-
 
 
 # Greeting templates for random selection
@@ -287,13 +289,10 @@ async def _llm_select_drill(drills: list[dict], target_skill: dict, user_id: str
     Returns:
         Selected drill with recommendation_reasoning field added
     """
-    from pathlib import Path
-
-    from src.prep.db.query_builder import get_query_builder
-    from src.prep.utils.logging import logger
-
     from src.prep.config import settings
+    from src.prep.services.database import get_query_builder
     from src.prep.services.llm import get_llm_provider
+    from src.prep.services.prompts import get_prompt_manager
 
     try:
         # Get user summary for context
@@ -326,17 +325,17 @@ async def _llm_select_drill(drills: list[dict], target_skill: dict, user_id: str
             ]
         )
 
-        # Load prompt template from file
-        prompt_path = Path("prompts/drill_recommendation.md")
-        prompt_template = prompt_path.read_text()
-
-        # Compile prompt with variables
-        prompt = (
-            prompt_template.replace("{user_summary}", user_summary or "No user summary available")
-            .replace("{skill_name}", target_skill["name"])
-            .replace("{skill_description}", target_skill.get("description", ""))
-            .replace("{targeting_reason}", targeting_reason)
-            .replace("{eligible_drills}", drills_text)
+        # Load and format prompt from Opik
+        prompt_mgr = get_prompt_manager()
+        prompt = prompt_mgr.format_prompt(
+            prompt_name="drill-recommendation",
+            variables={
+                "user_summary": user_summary or "No user summary available",
+                "skill_name": target_skill["name"],
+                "skill_description": target_skill.get("description", ""),
+                "targeting_reason": targeting_reason,
+                "eligible_drills": drills_text,
+            },
         )
 
         # Initialize LLM provider
@@ -344,7 +343,9 @@ async def _llm_select_drill(drills: list[dict], target_skill: dict, user_id: str
             provider_name="gemini",
             model=settings.llm_drill_selection_model,
             system_prompt="You are an AI interview coach selecting practice drills.",
-            temperature=0.3,
+            enable_thinking=True,
+            thinking_level="high",
+            temperature=0.7,
         )
 
         # Generate selection

@@ -187,7 +187,7 @@ class TestJWTValidator:
             await validator.verify_token("sample.jwt.token")
 
             call_kwargs = mock_jwt.decode.call_args[1]
-            assert call_kwargs["leeway"] == 30
+            assert call_kwargs["options"]["leeway"] == 30
 
     def test_verify_token_sync_success(self, mock_jwks_cache, mock_signing_key):
         """Test synchronous token verification."""

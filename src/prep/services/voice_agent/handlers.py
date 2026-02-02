@@ -12,10 +12,10 @@ from uuid import UUID
 from fastapi import APIRouter, HTTPException, WebSocket, WebSocketDisconnect
 from google.genai import types
 
-from src.prep.services.auth.dependencies import get_current_user_ws
 from src.prep.config import settings
-from src.prep.services.database import get_query_builder
 from src.prep.features.feedback.service import FeedbackService
+from src.prep.services.auth.dependencies import get_current_user_ws
+from src.prep.services.database import get_query_builder
 from src.prep.services.voice_agent.agent import create_interview_agent
 from src.prep.services.voice_agent.run_config import create_interview_run_config
 from src.prep.services.voice_agent.session_manager import voice_session_manager
@@ -238,38 +238,42 @@ async def _validate_and_get_session(session_id: UUID, user_id: UUID) -> dict:
     if not drill:
         raise HTTPException(status_code=404, detail="Drill not found")
 
-    skills_resp = (
-        db.client.table("drill_skills")
-        .select("skills(name)")
-        .eq("drill_id", str(drill_id))
-        .execute()
-    )
-    skills_tested = [
-        row["skills"]["name"]
-        for row in (skills_resp.data or [])
-        if row.get("skills")
-    ]
+    # skills_resp = (
+    #     db.client.table("drill_skills")
+    #     .select("skills(name)")
+    #     .eq("drill_id", str(drill_id))
+    #     .execute()
+    # )
+    # skills_tested = [row["skills"]["name"] for row in (skills_resp.data or []) if row.get("skills")]
 
-    profile_data = db.list_records("user_profile", filters={"user_id": str(user_id)}, limit=1)
-    user_name = "Candidate"
-    if profile_data:
-        first_name = profile_data[0].get("first_name")
-        user_name = first_name or user_name
-
-    drill_title = drill.get("display_title") or drill.get("title", "")
+    # profile_data = db.list_records("user_profile", filters={"user_id": str(user_id)}, limit=1)
+    # user_name = "Candidate"
+    # if profile_data:
+    #     first_name = profile_data[0].get("first_name")
+    #     user_name = first_name or user_name
 
     return {
         "session": session,
         "drill_id": UUID(str(drill_id)),
         "drill_context": {
-            "user_name": user_name,
             "discipline": drill.get("discipline", "product"),
-            "drill_title": drill_title,
-            "problem_type": drill.get("problem_type"),
-            "drill_description": drill.get("description") or "",
-            "skills_tested": skills_tested,
+            "problem_statement": drill.get("problem_statement"),
+            "context": drill.get("context"),
         },
     }
+
+    # return {
+    #     "session": session,
+    #     "drill_id": UUID(str(drill_id)),
+    #     "drill_context": {
+    #         "user_name": user_name,
+    #         "discipline": drill.get("discipline", "product"),
+    #         "drill_title": drill_title,
+    #         "problem_type": drill.get("problem_type"),
+    #         "drill_description": drill.get("description") or "",
+    #         "skills_tested": skills_tested,
+    #     },
+    # }
 
 
 async def _persist_session_result(session_id: UUID, session_data: dict, result: dict) -> None:
