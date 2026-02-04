@@ -11,7 +11,10 @@ from src.prep.services.database.models import DisciplineType
 class UserProfileRequest(BaseModel):
     """Request model for updating user profile."""
 
-    discipline: DisciplineType = Field(description="User's target discipline")
+    discipline: DisciplineType | None = Field(
+        default=DisciplineType.PRODUCT,
+        description="User's target discipline (defaults to 'product' if not provided)",
+    )
     first_name: str = Field(max_length=255, description="User's first name (required)")
     last_name: str | None = Field(None, max_length=255, description="User's last name (optional)")
     onboarding_completed: bool | None = None
@@ -22,7 +25,6 @@ class UserProfileRequest(BaseModel):
 
         json_schema_extra = {
             "example": {
-                "discipline": "product",
                 "first_name": "John",
                 "last_name": "Doe",
                 "onboarding_completed": True,

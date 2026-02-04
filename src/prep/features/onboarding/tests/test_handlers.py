@@ -35,12 +35,16 @@ def test_update_user_profile_success(client: TestClient) -> None:
 
 
 @pytest.mark.skip(reason="Requires Supabase connection and authentication")
-def test_update_user_profile_validation_missing_discipline(client: TestClient) -> None:
-    """Test PUT /profile/me fails without discipline."""
+def test_update_user_profile_defaults_discipline(client: TestClient) -> None:
+    """Test PUT /profile/me defaults discipline to 'product' when not provided."""
     user_id = str(uuid4())
     payload = {"first_name": "John"}
     response = client.put(f"/api/v1/profile/me?user_id={user_id}", json=payload)
-    assert response.status_code == 422
+    assert response.status_code == 200
+    data = response.json()
+    assert data["discipline"] == "product"
+    assert data["first_name"] == "John"
+    assert data["onboarding_completed"] is True
 
 
 @pytest.mark.skip(reason="Requires Supabase connection and authentication")

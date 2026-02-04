@@ -167,10 +167,14 @@ async def update_user_profile(
     try:
         db = get_query_builder()
 
+        # Ensure discipline defaults to 'product' if not provided
+        discipline_value = request.discipline if request.discipline else "product"
+        is_discipline_auto_assigned = request.discipline is None
+
         # Prepare update data
         update_data = {
             "user_id": str(current_user.id),
-            "discipline": request.discipline.value,
+            "discipline": discipline_value,
             "first_name": request.first_name,
         }
 
@@ -221,6 +225,7 @@ async def update_user_profile(
                 event="onboarding_completed",
                 properties={
                     "discipline": update_data["discipline"],
+                    "discipline_auto_assigned": is_discipline_auto_assigned,
                 },
             )
 
