@@ -257,6 +257,7 @@ async def _validate_and_get_session(session_id: UUID, user_id: UUID) -> dict:
         "drill_id": UUID(str(drill_id)),
         "drill_context": {
             "discipline": drill.get("discipline", "product"),
+            "title": drill.get("title"),
             "problem_statement": drill.get("problem_statement"),
             "context": drill.get("context"),
         },

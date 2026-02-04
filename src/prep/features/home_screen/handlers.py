@@ -546,13 +546,13 @@ async def get_drills(
                 )
             selected = random.choice(all_drills)
             selected = _enrich_drill(selected, db)
-            selected["recommendation_reasoning"] = "Here's a challenge to keep you sharp!"
+            # selected["recommendation_reasoning"] = "Here's a challenge to keep you sharp!"
         elif len(eligible_drills) == 1:
             selected = eligible_drills[0]
             selected = _enrich_drill(selected, db)
-            selected["recommendation_reasoning"] = (
-                f"This drill focuses on {target_skill['name']}, an area for growth."
-            )
+            # selected["recommendation_reasoning"] = (
+            #     f"This drill focuses on {target_skill['name']}, an area for growth."
+            # )
         else:
             # LLM selection with 2+ options
             selected = await _llm_select_drill(eligible_drills, target_skill, user_id)

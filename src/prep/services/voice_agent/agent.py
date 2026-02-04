@@ -56,6 +56,7 @@ def create_interview_agent(drill_context: dict) -> Agent:
     instruction = prompt_manager.format_prompt(
         prompt_name=prompt_name,
         variables={
+            "title": drill_context.get("title", ""),
             "problem_statement": drill_context.get("problem_statement", ""),
             "context": drill_context.get("context", ""),
         },
