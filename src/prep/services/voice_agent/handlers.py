@@ -111,11 +111,17 @@ async def _upstream_task(websocket: WebSocket, voice_session) -> None:
         try:
             message = await websocket.receive()
 
+            if message["type"] == "websocket.disconnect":
+                voice_session.is_active = False
+                voice_session.live_queue.close()
+                break
+
             if "bytes" in message and message["bytes"] is not None:
                 audio_blob = types.Blob(
                     mime_type="audio/pcm;rate=16000",
                     data=message["bytes"],
                 )
+                logger.info("Upstream: Received %d bytes of audio", len(message["bytes"]))
                 voice_session.live_queue.send_realtime(audio_blob)
 
             elif "text" in message and message["text"] is not None:
@@ -151,6 +157,7 @@ async def _downstream_task(websocket: WebSocket, voice_session, run_config) -> N
         live_request_queue=voice_session.live_queue,
         run_config=run_config,
     ):
+        logger.info("Downstream: Received event from runner: %s", event)
         try:
             if event.error_code:
                 await _safe_send_json(
@@ -168,6 +175,7 @@ async def _downstream_task(websocket: WebSocket, voice_session, run_config) -> N
             if event.content and event.content.parts:
                 for part in event.content.parts:
                     if part.inline_data and part.inline_data.mime_type.startswith("audio/"):
+                        logger.info("Downstream: Audio content found in event")
                         audio_b64 = base64.b64encode(part.inline_data.data).decode()
                         await _safe_send_json(
                             websocket,

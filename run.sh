@@ -4,7 +4,7 @@
 
 set -e
 
-echo "🚀 Starting PM Interview Prep API..."
+echo "🚀 Starting Prep API..."
 
 # Check if .env exists
 if [ ! -f .env ]; then
