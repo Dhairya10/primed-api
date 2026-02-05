@@ -1,5 +1,6 @@
 """API handlers for skills endpoints."""
 
+import logging
 from fastapi import APIRouter, Depends, HTTPException
 
 from src.prep.features.skills.schemas import (
@@ -15,6 +16,7 @@ from src.prep.services.auth.models import JWTUser
 from src.prep.services.database import get_query_builder
 
 router = APIRouter()
+logger = logging.getLogger(__name__)
 
 
 def compute_is_tested_batch(user_id: str) -> dict[str, bool]:
@@ -181,17 +183,22 @@ async def get_skill_history(
         for session in all_sessions.data:
             # Find skill evaluation for this skill
             skill_eval = next(
-                (e for e in session.get("skill_evaluations", []) if e.get("skill_id") == skill_id),
+                (e for e in (session.get("skill_evaluations") or []) if e.get("skill_id") == skill_id),
                 None,
             )
 
             if skill_eval:
-                drill = session.get("drills", {})
-                product = drill.get("products", {})
+                drill = session.get("drills")
+                if not drill:
+                    continue
+
+                product = drill.get("products") or {}
 
                 # Format score change with + prefix for positive values
-                score_change = skill_eval.get("score_change", 0)
+                score_change = skill_eval.get("score_change") or 0
                 score_change_str = f"+{score_change}" if score_change > 0 else str(score_change)
+
+                score_after = skill_eval.get("score_after") or 0.0
 
                 sessions.append(
                     SessionPerformance(
@@ -201,7 +208,7 @@ async def get_skill_history(
                         completed_at=session["completed_at"],
                         performance=skill_eval.get("evaluation", ""),
                         score_change=score_change_str,
-                        score_after=skill_eval.get("score_after", 0.0),
+                        score_after=score_after,
                     )
                 )
 
@@ -234,4 +241,5 @@ async def get_skill_history(
     except HTTPException:
         raise
     except Exception as e:
+        logger.error(f"Error fetching skill history: {e}", exc_info=True)
         raise HTTPException(status_code=500, detail="Unable to fetch skill history") from e
