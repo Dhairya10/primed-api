@@ -64,6 +64,11 @@ async def voice_drill_session(
             user_id=str(user.id),
         )
 
+        # Trigger agent to speak first by sending session ready marker
+        # This marker can be filtered from transcript if needed
+        welcome_trigger = types.Content(parts=[types.Part(text="[SESSION_READY]")])
+        voice_session.live_queue.send_content(welcome_trigger)
+
         await asyncio.gather(
             _upstream_task(websocket, voice_session),
             _downstream_task(websocket, voice_session, run_config),
