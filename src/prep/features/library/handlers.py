@@ -242,20 +242,22 @@ async def get_library_drills(
         raise HTTPException(status_code=500, detail="Unable to fetch drills") from e
 
 
-@router.get("/metadata", response_model=SingleResponse[dict[str, list[str]]])
+from src.prep.features.library.schemas import LibraryMetadataResponse
+
+@router.get("/metadata", response_model=SingleResponse[LibraryMetadataResponse])
 async def get_library_metadata(
     current_user: JWTUser = Depends(get_current_user),
-) -> SingleResponse[dict[str, list[str]]]:
+) -> SingleResponse[LibraryMetadataResponse]:
     """
     Get metadata for library filtering options.
 
-    Returns available problem types for drill filtering based on user's discipline.
+    Returns available problem types and skills for drill filtering.
 
     Args:
         current_user: Authenticated user (from JWT token)
 
     Returns:
-        Metadata with discipline-specific problem types
+        Metadata with discipline-specific problem types and all skills
 
     Raises:
         HTTPException: 404 if user hasn't completed onboarding
@@ -267,11 +269,11 @@ async def get_library_metadata(
                 "problem_types": [
                     "behavioral",
                     "guesstimation",
-                    "metrics",
-                    "problem_solving",
-                    "product_design",
-                    "product_improvement",
-                    "product_strategy"
+                    ...
+                ],
+                "skills": [
+                    {"id": "uuid", "name": "Communication"},
+                    {"id": "uuid", "name": "Product Design"}
                 ]
             }
         }
@@ -301,7 +303,32 @@ async def get_library_metadata(
         # Get problem types for user's discipline
         problem_types = DISCIPLINE_PROBLEM_TYPES.get(user_discipline, [])
 
-        return SingleResponse(data={"problem_types": problem_types})
+        # Get skills for user's discipline
+        skills_response = (
+            db.client.table("skill_disciplines")
+            .select("skills(id, name)")
+            .eq("discipline", user_discipline)
+            .order("skills(name)")
+            .execute()
+        )
+
+        skills_list = []
+        if skills_response.data:
+            skills_list = [
+                {"id": item["skills"]["id"], "name": item["skills"]["name"]}
+                for item in skills_response.data
+                if item.get("skills")
+            ]
+
+        # Sort by name (since order in join might not be preserved perfectly by remote order)
+        skills_list.sort(key=lambda x: x["name"])
+
+        return SingleResponse(
+            data={
+                "problem_types": problem_types,
+                "skills": skills_list,
+            }
+        )
     except HTTPException:
         raise
     except Exception as e:
