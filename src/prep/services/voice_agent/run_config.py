@@ -19,6 +19,8 @@ def create_interview_run_config(session_id: str, user_id: str) -> RunConfig:
     - Session resumption (handle connection drops)
     - Context window compression (for 25-minute sessions)
     - Audio transcription (both input and output)
+    - Proactive audio (agent can initiate responses)
+    - Affective dialog (emotional adaptation)
     """
     voice_name = settings.gemini_live_voice or os.getenv("GEMINI_LIVE_VOICE", "")
     if not voice_name:
@@ -41,6 +43,10 @@ def create_interview_run_config(session_id: str, user_id: str) -> RunConfig:
                 )
             )
         ),
+        # Enable proactive conversational behavior
+        proactivity=types.ProactivityConfig(proactive_audio=True),
+        # Enable emotional adaptation
+        enable_affective_dialog=True,
         custom_metadata={
             "session_id": session_id,
             "user_id": user_id,
