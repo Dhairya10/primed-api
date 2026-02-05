@@ -136,6 +136,9 @@ async def _upstream_task(websocket: WebSocket, voice_session) -> None:
                     content = types.Content(parts=[types.Part(text=data.get("text", ""))])
                     voice_session.live_queue.send_content(content)
 
+                if data.get("type") == "session_start":
+                    logger.info("Session start signal received from client")
+
         except WebSocketDisconnect:
             voice_session.is_active = False
             voice_session.live_queue.close()
