@@ -88,11 +88,12 @@ async def voice_drill_session(
                 await _persist_session_result(drill_session_id, session_data, result)
 
                 asyncio.create_task(
-                    _trigger_feedback_pipeline(
+                    _maybe_trigger_feedback_pipeline(
                         drill_session_id,
                         session_data["drill_id"],
                         result["transcript_text"],
                         user.id,
+                        result["duration_seconds"],
                     )
                 )
 
@@ -102,6 +103,7 @@ async def voice_drill_session(
                         "type": "session_end",
                         "duration_seconds": result["duration_seconds"],
                         "transcript_length": len(result["transcript_text"]),
+                        "feedback_scheduled": result["duration_seconds"] >= settings.min_feedback_duration_seconds,
                     },
                 )
             except Exception as e:
@@ -319,6 +321,26 @@ async def _persist_session_result(session_id: UUID, session_data: dict, result: 
             "metadata": metadata,
         },
     )
+
+
+async def _maybe_trigger_feedback_pipeline(
+    session_id: UUID,
+    drill_id: UUID,
+    transcript: str,
+    user_id: UUID,
+    duration_seconds: int,
+) -> None:
+    """Conditionally trigger feedback based on session duration."""
+    if duration_seconds < settings.min_feedback_duration_seconds:
+        logger.info(
+            "Skipping feedback for session %s: duration %ds < minimum %ds",
+            session_id,
+            duration_seconds,
+            settings.min_feedback_duration_seconds,
+        )
+        return
+
+    await _trigger_feedback_pipeline(session_id, drill_id, transcript, user_id)
 
 
 async def _trigger_feedback_pipeline(

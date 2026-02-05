@@ -116,6 +116,7 @@ class DashboardSession(BaseModel):
     product_logo_url: str | None
     completed_at: str
     problem_type: str | None
+    has_feedback: bool
 
 
 class DashboardSessionsResponse(BaseModel):

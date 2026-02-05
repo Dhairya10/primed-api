@@ -34,6 +34,7 @@ class Settings(BaseSettings):
     gemini_live_voice: str = ""
     voice_session_max_duration_minutes: int = 25
     voice_session_max_concurrent: int = 50
+    min_feedback_duration_seconds: int = 120  # 2 minutes - sessions shorter than this skip feedback
 
     # Opik Configuration
     opik_api_key: str = ""

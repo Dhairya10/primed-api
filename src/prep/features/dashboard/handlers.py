@@ -2,6 +2,7 @@
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 
+from src.prep.config import settings
 from src.prep.features.dashboard.validators import (
     DashboardSession,
     DashboardSessionsResponse,
@@ -68,7 +69,7 @@ async def get_dashboard_drills(
         all_sessions = (
             db.client.table("drill_sessions")
             .select(
-                "id, drill_id, completed_at, skill_evaluations, drills(title, problem_type, products(logo_url))"
+                "id, drill_id, completed_at, duration_seconds, skill_evaluations, drills(title, problem_type, products(logo_url))"
             )
             .eq("user_id", user_id)
             .eq("status", "completed")
@@ -107,6 +108,7 @@ async def get_dashboard_drills(
                     product_logo_url=product.get("logo_url") if product else None,
                     completed_at=session["completed_at"],
                     problem_type=drill_problem_type,
+                    has_feedback=(session.get("duration_seconds") or 0) >= settings.min_feedback_duration_seconds,
                 )
             )
 
