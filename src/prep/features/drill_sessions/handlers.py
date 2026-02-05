@@ -49,7 +49,7 @@ async def check_drill_eligibility(
     Example Response:
         {
             "eligible": true,
-            "num_drills": 10,
+            "num_drills_left": 10,
             "message": "You have 10 drills available."
         }
     """
@@ -67,18 +67,18 @@ async def check_drill_eligibility(
                 detail="User profile not found. Please complete onboarding.",
             )
 
-        num_drills = profile_data[0].get("num_drills", 0)
+        num_drills_left = profile_data[0].get("num_drills_left", 0)
 
-        if num_drills >= 1:
+        if num_drills_left >= 1:
             return CheckDrillEligibilityResponse(
                 eligible=True,
-                num_drills=num_drills,
-                message=f"You have {num_drills} drill{'s' if num_drills != 1 else ''} available.",
+                num_drills_left=num_drills_left,
+                message=f"You have {num_drills_left} drill{'s' if num_drills_left != 1 else ''} available.",
             )
         else:
             return CheckDrillEligibilityResponse(
                 eligible=False,
-                num_drills=0,
+                num_drills_left=0,
                 message="You have no drills remaining. Please purchase more to continue.",
             )
 
@@ -157,16 +157,16 @@ async def start_drill_session(
                 detail="User profile not found. Please complete onboarding.",
             )
 
-        num_drills = profile_data[0].get("num_drills", 0)
+        num_drills_left = profile_data[0].get("num_drills_left", 0)
 
         # Validate user has available drills (defense in depth)
-        if num_drills < 1:
+        if num_drills_left < 1:
             raise HTTPException(
                 status_code=403,
                 detail={
                     "error": "insufficient_drills",
                     "message": "You have no drills remaining. Please purchase more to continue.",
-                    "num_drills": num_drills,
+                    "num_drills_left": num_drills_left,
                 },
             )
 
@@ -187,24 +187,24 @@ async def start_drill_session(
 
         session_id = UUID(session["id"])
 
-        # Decrement num_drills after successful session creation
+        # Decrement num_drills_left after successful session creation
         try:
             db.update_record(
                 "user_profile",
                 profile_data[0]["id"],
-                {"num_drills": num_drills - 1, "updated_at": "NOW()"},
+                {"num_drills_left": num_drills_left - 1, "updated_at": "NOW()"},
             )
             logger.info(
-                "Decremented num_drills",
+                "Decremented num_drills_left",
                 extra={
                     "user_id": user_id,
-                    "from": num_drills,
-                    "to": num_drills - 1,
+                    "from": num_drills_left,
+                    "to": num_drills_left - 1,
                 },
             )
         except Exception as e:
             logger.error(
-                f"Failed to decrement num_drills for user {user_id}: {e}",
+                f"Failed to decrement num_drills_left for user {user_id}: {e}",
                 exc_info=True,
             )
             # Don't fail the request if decrement fails, but log the error

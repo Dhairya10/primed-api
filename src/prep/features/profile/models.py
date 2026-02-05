@@ -9,8 +9,7 @@ class ProfileScreenResponse(BaseModel):
     first_name: str | None = Field(None, description="User's first name")
     last_name: str | None = Field(None, description="User's last name")
     email: str = Field(description="User's email address")
-    num_interviews: int = Field(ge=0, description="Number of interviews remaining for the user")
-    num_drills: int = Field(ge=0, description="Number of drills remaining for the user")
+    num_drills_left: int = Field(ge=0, description="Number of drill credits remaining for the user")
     discipline: str | None = Field(None, description="User's target discipline")
 
     class Config:
@@ -21,8 +20,7 @@ class ProfileScreenResponse(BaseModel):
                 "first_name": "John",
                 "last_name": "Doe",
                 "email": "john.doe@example.com",
-                "num_interviews": 5,
-                "num_drills": 10,
+                "num_drills_left": 10,
                 "discipline": "product",
             }
         }

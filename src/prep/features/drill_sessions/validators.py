@@ -10,7 +10,7 @@ class CheckDrillEligibilityResponse(BaseModel):
     """Eligibility check for drills (similar to interviews)."""
 
     eligible: bool = Field(description="Whether user is eligible to start a drill")
-    num_drills: int = Field(ge=0, description="Number of drills remaining")
+    num_drills_left: int = Field(ge=0, description="Number of drill credits remaining")
     message: str = Field(description="Human-readable message about eligibility status")
 
 

@@ -33,8 +33,7 @@ async def get_profile_screen_data(
         current_user: User data from validated JWT token
 
     Returns:
-        Profile screen data with first_name, last_name, email, num_interviews, num_drills, and
-        discipline
+        Profile screen data with first_name, last_name, email, num_drills_left, and discipline
 
     Raises:
         HTTPException: 404 if user profile not found
@@ -45,8 +44,7 @@ async def get_profile_screen_data(
             "first_name": "John",
             "last_name": "Doe",
             "email": "john.doe@example.com",
-            "num_interviews": 5,
-            "num_drills": 10,
+            "num_drills_left": 10,
             "discipline": "product"
         }
     """
@@ -72,8 +70,7 @@ async def get_profile_screen_data(
             first_name=profile.get("first_name"),
             last_name=profile.get("last_name"),
             email=profile["email"],
-            num_interviews=profile.get("num_interviews", 0),
-            num_drills=profile.get("num_drills", 0),
+            num_drills_left=profile.get("num_drills_left", 0),
             discipline=profile.get("discipline"),
         )
 
