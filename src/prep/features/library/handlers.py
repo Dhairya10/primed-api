@@ -113,20 +113,43 @@ async def get_library_drills(
             skill_filter = skill_id
 
         # Build base query: all active drills for user's discipline
+        import uuid
+
+        def is_valid_uuid(val):
+            try:
+                uuid.UUID(str(val))
+                return True
+            except ValueError:
+                return False
 
         # If filtering by skill, use JOIN with drill_skills
         if skill_filter:
-            base_query = (
-                db.client.from_("drills")
-                .select(
-                    "id, title, discipline, problem_type, product_id, "
-                    "products(logo_url), drill_skills!inner(skill_id)",
-                    count="exact",
+            if is_valid_uuid(skill_filter):
+                # Filter by drill_skills.skill_id
+                base_query = (
+                    db.client.from_("drills")
+                    .select(
+                        "id, title, discipline, problem_type, product_id, "
+                        "products(logo_url), drill_skills!inner(skill_id)",
+                        count="exact",
+                    )
+                    .eq("drill_skills.skill_id", skill_filter)
+                    .eq("is_active", True)
+                    .eq("discipline", user_discipline)
                 )
-                .eq("drill_skills.skill_id", skill_filter)
-                .eq("is_active", True)
-                .eq("discipline", user_discipline)
-            )
+            else:
+                # Filter by drill_skills.skills.name (for non-UUID names)
+                base_query = (
+                    db.client.from_("drills")
+                    .select(
+                        "id, title, discipline, problem_type, product_id, "
+                        "products(logo_url), drill_skills!inner(skill_id, skills!inner(name))",
+                        count="exact",
+                    )
+                    .eq("drill_skills.skills.name", skill_filter)
+                    .eq("is_active", True)
+                    .eq("discipline", user_discipline)
+                )
         else:
             base_query = (
                 db.client.from_("drills")
