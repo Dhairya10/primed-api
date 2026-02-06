@@ -96,7 +96,8 @@ async def check_drill_eligibility(
 @write_rate_limit
 async def start_drill_session(
     request: Request,
-    session_data: DrillSessionStartRequest, current_user: JWTUser = Depends(get_current_user)
+    session_data: DrillSessionStartRequest,
+    current_user: JWTUser = Depends(get_current_user),
 ) -> DrillSessionStartResponse:
     """
     Initialize drill session.
@@ -192,27 +193,45 @@ async def start_drill_session(
 
         session_id = UUID(session["id"])
 
-        # Decrement num_drills_left after successful session creation
+        # Atomically decrement num_drills_left
+        # This prevents race condition where two concurrent requests both see num_drills_left=1
+        # and both create sessions, decrementing to -1
         try:
-            db.update_record(
-                "user_profile",
-                profile_data[0]["id"],
-                {"num_drills_left": num_drills_left - 1, "updated_at": "NOW()"},
+            updated_profile = db.decrement_field(
+                table="user_profile",
+                record_id=profile_data[0]["id"],
+                field_name="num_drills_left",
+                decrement_by=1,
+                min_value=0,
             )
             logger.info(
-                "Decremented num_drills_left",
+                "Atomically decremented num_drills_left",
                 extra={
                     "user_id": user_id,
-                    "from": num_drills_left,
-                    "to": num_drills_left - 1,
+                    "new_value": updated_profile.get("num_drills_left", 0),
                 },
             )
-        except Exception as e:
+        except Exception as decrement_error:
+            # If decrement fails, rollback the session creation
             logger.error(
-                f"Failed to decrement num_drills_left for user {user_id}: {e}",
+                f"Failed to decrement drills for user {user_id}, "
+                f"rolling back session {session_id}: {decrement_error}",
                 exc_info=True,
             )
-            # Don't fail the request if decrement fails, but log the error
+            # Rollback: delete the created session
+            try:
+                db.delete_record("drill_sessions", str(session_id))
+                logger.info(f"Rolled back session {session_id} due to decrement failure")
+            except Exception as rollback_error:
+                logger.error(
+                    f"Failed to rollback session {session_id}: {rollback_error}",
+                    exc_info=True,
+                )
+
+            raise HTTPException(
+                status_code=500,
+                detail="Failed to decrement drill count. Session not created.",
+            )
 
         logger.info(
             "Created drill session",
@@ -255,8 +274,7 @@ async def start_drill_session(
 @router.get("/{session_id}/status", response_model=DrillSessionStatusResponse)
 @default_rate_limit
 async def get_drill_session_status(
-    request: Request,
-    session_id: UUID, current_user: JWTUser = Depends(get_current_user)
+    request: Request, session_id: UUID, current_user: JWTUser = Depends(get_current_user)
 ) -> DrillSessionStatusResponse:
     """
     Get drill session status.
@@ -356,9 +374,7 @@ async def abandon_drill_session(
     try:
         db = get_query_builder()
 
-        updated_session = drill_session_service.abandon_session(
-            db, session_id, req.exit_feedback
-        )
+        updated_session = drill_session_service.abandon_session(db, session_id, req.exit_feedback)
 
         return AbandonDrillSessionResponse(
             session_id=session_id,
@@ -376,8 +392,7 @@ async def abandon_drill_session(
 @router.get("/{session_id}/feedback", response_model=SessionFeedbackResponse)
 @default_rate_limit
 async def get_session_feedback(
-    request: Request,
-    session_id: UUID, current_user: JWTUser = Depends(get_current_user)
+    request: Request, session_id: UUID, current_user: JWTUser = Depends(get_current_user)
 ) -> SessionFeedbackResponse:
     """
     Get feedback for a completed drill session.

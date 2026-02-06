@@ -1,11 +1,14 @@
 """Generic database utility functions for Supabase interactions."""
 
+import logging
 from typing import Any
 from uuid import UUID
 
 from supabase import Client
 
 from src.prep.services.database.connection import get_supabase_client
+
+logger = logging.getLogger(__name__)
 
 
 class SupabaseQueryBuilder:
@@ -159,6 +162,136 @@ class SupabaseQueryBuilder:
         """
         response = self.client.table(table).insert(data).execute()
         return response.data[0] if response.data else None
+
+    def upsert_record(
+        self, table: str, record: dict[str, Any], conflict_columns: list[str]
+    ) -> dict[str, Any]:
+        """
+        Insert or update a record atomically using PostgreSQL UPSERT.
+
+        Args:
+            table: Name of the table
+            record: Record data to insert/update
+            conflict_columns: Column(s) to check for conflicts (e.g., ["user_id"])
+
+        Returns:
+            The inserted or updated record
+
+        Raises:
+            Exception: If the operation fails
+
+        Example:
+            >>> builder = SupabaseQueryBuilder()
+            >>> builder.upsert_record(
+            ...     "user_profile",
+            ...     {"user_id": "123", "email": "test@example.com"},
+            ...     conflict_columns=["user_id"]
+            ... )
+        """
+        try:
+            result = (
+                self.client.table(table)
+                .upsert(record, on_conflict=",".join(conflict_columns))
+                .execute()
+            )
+            return result.data[0]
+        except Exception as e:
+            logger.error(f"Failed to upsert record in {table}: {e}")
+            raise
+
+    def upsert_records(
+        self, table: str, records: list[dict[str, Any]], conflict_columns: list[str]
+    ) -> list[dict[str, Any]]:
+        """
+        Insert or update multiple records atomically using PostgreSQL UPSERT.
+
+        Args:
+            table: Name of the table
+            records: List of record data to insert/update
+            conflict_columns: Column(s) to check for conflicts (e.g., ["user_id", "skill_id"])
+
+        Returns:
+            List of inserted or updated records
+
+        Raises:
+            Exception: If the operation fails
+
+        Example:
+            >>> builder = SupabaseQueryBuilder()
+            >>> builder.upsert_records(
+            ...     "user_skill_scores",
+            ...     [
+            ...         {"user_id": "123", "skill_id": "1", "score": 0.0},
+            ...         {"user_id": "123", "skill_id": "2", "score": 0.0},
+            ...     ],
+            ...     conflict_columns=["user_id", "skill_id"]
+            ... )
+        """
+        try:
+            result = (
+                self.client.table(table)
+                .upsert(records, on_conflict=",".join(conflict_columns))
+                .execute()
+            )
+            return result.data
+        except Exception as e:
+            logger.error(f"Failed to upsert {len(records)} records in {table}: {e}")
+            raise
+
+    def decrement_field(
+        self,
+        table: str,
+        record_id: UUID | str,
+        field_name: str,
+        decrement_by: int = 1,
+        min_value: int = 0,
+    ) -> dict[str, Any]:
+        """
+        Atomically decrement a numeric field using PostgreSQL RPC.
+
+        Args:
+            table: Name of the table
+            record_id: ID of the record to update
+            field_name: Name of the field to decrement
+            decrement_by: Amount to decrement (default: 1)
+            min_value: Minimum allowed value (default: 0)
+
+        Returns:
+            The updated record
+
+        Raises:
+            Exception: If the operation fails or value would go below min_value
+
+        Example:
+            >>> builder = SupabaseQueryBuilder()
+            >>> builder.decrement_field(
+            ...     "user_profile",
+            ...     "profile-id-123",
+            ...     "num_drills_left",
+            ...     decrement_by=1,
+            ...     min_value=0
+            ... )
+        """
+        try:
+            # Use Supabase RPC to call a PostgreSQL function for atomic decrement
+            result = self.client.rpc(
+                "decrement_field",
+                {
+                    "target_table": table,
+                    "target_id": str(record_id),
+                    "target_field": field_name,
+                    "decrement_amount": decrement_by,
+                    "minimum_value": min_value,
+                },
+            ).execute()
+
+            if not result.data:
+                raise Exception(f"Failed to decrement {field_name} in {table}")
+
+            return result.data[0]
+        except Exception as e:
+            logger.error(f"Failed to decrement {field_name} in {table} for record {record_id}: {e}")
+            raise
 
     def update_record(
         self, table: str, record_id: UUID | str, data: dict[str, Any]

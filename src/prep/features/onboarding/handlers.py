@@ -20,38 +20,42 @@ logger = logging.getLogger(__name__)
 
 async def initialize_user_skill_scores(user_id: str) -> None:
     """
-    Eagerly populate all skills with score=0 after onboarding.
+    Initialize skill scores for a new user (atomic upsert to prevent duplicates).
 
     Creates user_skill_scores records for all skills in the database,
-    initializing each with a score of 0. This ensures consistent queries
-    and simplifies the skill map UI (no null checks needed).
+    initializing each with a score of 0. Uses atomic upsert to handle
+    concurrent calls safely and prevent duplicate records.
 
     Args:
         user_id: UUID of the user completing onboarding
 
     Raises:
-        Exception: If database insert fails
+        Exception: If database operation fails
     """
     try:
         db = get_query_builder()
 
         # Get all skills from the database
-        skills_response = db.client.from_("skills").select("id").execute()
+        skills = db.list_records("skills")
 
-        if not skills_response.data:
+        if not skills:
             logger.warning("No skills found in database - skipping skill score initialization")
             return
 
-        # Prepare records for bulk insert
-        records = [
-            {"user_id": user_id, "skill_id": skill["id"], "score": 0.0}
-            for skill in skills_response.data
+        # Prepare records for batch upsert
+        skill_score_records = [
+            {"user_id": user_id, "skill_id": skill["id"], "score": 0.0} for skill in skills
         ]
 
-        # Bulk insert all skill scores
-        db.client.from_("user_skill_scores").insert(records).execute()
+        # Use atomic batch upsert to prevent duplicates from concurrent calls
+        # ON CONFLICT (user_id, skill_id) DO UPDATE ensures idempotency
+        db.upsert_records(
+            table="user_skill_scores",
+            records=skill_score_records,
+            conflict_columns=["user_id", "skill_id"],
+        )
 
-        logger.info(f"Initialized {len(records)} skill scores for user {user_id} (all set to 0.0)")
+        logger.info(f"Initialized {len(skill_score_records)} skill scores for user {user_id}")
 
     except Exception as e:
         logger.error(f"Failed to initialize skill scores for user {user_id}: {e}")
@@ -89,49 +93,46 @@ async def get_user_profile(
     try:
         db = get_query_builder()
 
-        # Try to get existing profile
-        profile_data = db.list_records(
-            "user_profile", filters={"user_id": str(current_user.id)}, limit=1
-        )
-
-        # If profile exists, return it
-        if profile_data:
-            return UserProfileResponse(**profile_data[0])
-
-        # JIT Provisioning: Create profile from JWT data
-        logger.info(f"JIT: Creating profile for new user {current_user.id}")
-
         # Extract first name from OAuth metadata (Google, etc.)
         full_name = current_user.user_metadata.get("full_name", "")
         first_name = full_name.split()[0] if full_name else ""
 
-        # Create new profile
-        new_profile = {
-            "user_id": str(current_user.id),
-            "email": current_user.email,
-            "first_name": first_name or None,  # None if empty string
-            "last_name": None,
-            "discipline": None,
-            "onboarding_completed": False,
-        }
-
-        db.insert_record("user_profile", new_profile)
-
-        # Track JIT provisioning event
-        posthog_service = PostHogService()
-        posthog_service.capture(
-            distinct_id=str(current_user.id),
-            event="profile_created_jit",
-            properties={
+        # Atomic upsert: create if doesn't exist, fetch if it does
+        # This eliminates the race condition between check and insert
+        profile_data = db.upsert_record(
+            table="user_profile",
+            record={
+                "user_id": str(current_user.id),
                 "email": current_user.email,
-                "has_oauth_name": bool(first_name),
+                "first_name": first_name or None,
+                "last_name": None,
+                "discipline": None,
+                "onboarding_completed": False,
             },
+            conflict_columns=["user_id"],
         )
 
-        logger.info(f"JIT: Successfully created profile for user {current_user.id}")
+        # Track JIT provisioning event (only if profile was newly created)
+        # Note: Supabase upsert doesn't tell us if it was insert or update
+        # So we check if skill scores exist as a proxy for "is new user"
+        existing_scores = db.list_records(
+            "user_skill_scores", filters={"user_id": str(current_user.id)}, limit=1
+        )
 
-        # Return the newly created profile
-        return UserProfileResponse(**new_profile)
+        if not existing_scores:
+            # This is likely a new user, track the event
+            posthog_service = PostHogService()
+            posthog_service.capture(
+                distinct_id=str(current_user.id),
+                event="profile_created_jit",
+                properties={
+                    "email": current_user.email,
+                    "has_oauth_name": bool(first_name),
+                },
+            )
+            logger.info(f"JIT: Successfully created profile for user {current_user.id}")
+
+        return UserProfileResponse(**profile_data)
 
     except HTTPException:
         # Re-raise HTTP exceptions
@@ -196,20 +197,15 @@ async def update_user_profile(
         if req.bio is not None:
             update_data["bio"] = req.bio
 
-        # Check if profile exists
-        existing = db.list_records(
-            "user_profile", filters={"user_id": str(current_user.id)}, limit=1
+        # Atomic upsert: update if exists, create if doesn't
+        # This handles edge case where profile doesn't exist yet
+        update_data["email"] = current_user.email  # Ensure email is set
+        db.upsert_record(
+            table="user_profile",
+            record=update_data,
+            conflict_columns=["user_id"],
         )
-
-        if existing:
-            # Update existing profile
-            update_data["updated_at"] = "NOW()"
-            db.update_record("user_profile", existing[0]["id"], update_data)
-            logger.info(f"Updated profile for user {current_user.id}")
-        else:
-            # Insert new profile
-            db.insert_record("user_profile", update_data)
-            logger.info(f"Created new profile for user {current_user.id}")
+        logger.info(f"Updated/created profile for user {current_user.id}")
 
         # Initialize skill scores if this is the first time completing onboarding
         if update_data.get("onboarding_completed"):
