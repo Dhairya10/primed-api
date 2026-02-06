@@ -4,7 +4,7 @@ import logging
 from datetime import UTC, datetime
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Request
 
 from src.prep.features.drill_sessions.services import DrillSessionService
 from src.prep.features.drill_sessions.validators import (
@@ -19,6 +19,7 @@ from src.prep.features.feedback.schemas import SessionFeedbackResponse
 from src.prep.services.auth.dependencies import get_current_user
 from src.prep.services.auth.models import JWTUser
 from src.prep.services.database import get_query_builder
+from src.prep.services.rate_limiter import default_rate_limit, write_rate_limit
 
 logger = logging.getLogger(__name__)
 
@@ -27,7 +28,9 @@ drill_session_service = DrillSessionService()
 
 
 @router.get("/check-eligibility", response_model=CheckDrillEligibilityResponse)
+@default_rate_limit
 async def check_drill_eligibility(
+    request: Request,
     current_user: JWTUser = Depends(get_current_user),
 ) -> CheckDrillEligibilityResponse:
     """
@@ -90,7 +93,9 @@ async def check_drill_eligibility(
 
 
 @router.post("/start", response_model=DrillSessionStartResponse, status_code=201)
+@write_rate_limit
 async def start_drill_session(
+    request: Request,
     session_data: DrillSessionStartRequest, current_user: JWTUser = Depends(get_current_user)
 ) -> DrillSessionStartResponse:
     """
@@ -248,7 +253,9 @@ async def start_drill_session(
 
 
 @router.get("/{session_id}/status", response_model=DrillSessionStatusResponse)
+@default_rate_limit
 async def get_drill_session_status(
+    request: Request,
     session_id: UUID, current_user: JWTUser = Depends(get_current_user)
 ) -> DrillSessionStatusResponse:
     """
@@ -312,9 +319,11 @@ async def get_drill_session_status(
 
 
 @router.post("/{session_id}/abandon", response_model=AbandonDrillSessionResponse)
+@write_rate_limit
 async def abandon_drill_session(
+    request: Request,
     session_id: UUID,
-    request: AbandonDrillSessionRequest,
+    req: AbandonDrillSessionRequest,
     current_user: JWTUser = Depends(get_current_user),
 ) -> AbandonDrillSessionResponse:
     """
@@ -325,7 +334,7 @@ async def abandon_drill_session(
 
     Args:
         session_id: Drill session UUID
-        request: Optional exit feedback
+        req: Optional exit feedback
         current_user: User data from validated JWT token
 
     Returns:
@@ -347,14 +356,8 @@ async def abandon_drill_session(
     try:
         db = get_query_builder()
 
-        session = drill_session_service.get_session(db, session_id)
-
-        # Verify session belongs to user
-        if session["user_id"] != str(current_user.id):
-            raise HTTPException(status_code=403, detail="Not authorized to access this session")
-
         updated_session = drill_session_service.abandon_session(
-            db, session_id, request.exit_feedback
+            db, session_id, req.exit_feedback
         )
 
         return AbandonDrillSessionResponse(
@@ -371,7 +374,9 @@ async def abandon_drill_session(
 
 
 @router.get("/{session_id}/feedback", response_model=SessionFeedbackResponse)
+@default_rate_limit
 async def get_session_feedback(
+    request: Request,
     session_id: UUID, current_user: JWTUser = Depends(get_current_user)
 ) -> SessionFeedbackResponse:
     """

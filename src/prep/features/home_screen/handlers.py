@@ -3,13 +3,14 @@
 import logging
 from typing import Generic, TypeVar
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Request
 from pydantic import BaseModel
 
 from src.prep.services.auth.dependencies import get_current_user
 from src.prep.services.auth.models import JWTUser
 from src.prep.services.database import get_query_builder
 from src.prep.services.database.models import DrillHomeResponse
+from src.prep.services.rate_limiter import default_rate_limit, llm_heavy_rate_limit
 
 logger = logging.getLogger(__name__)
 
@@ -61,7 +62,9 @@ GREETING_TEMPLATES = [
 
 
 @router.get("/greeting", response_model=SingleResponse[GreetingResponse])
+@default_rate_limit
 async def get_home_greeting(
+    request: Request,
     current_user: JWTUser = Depends(get_current_user),
 ) -> SingleResponse[GreetingResponse]:
     """
@@ -454,7 +457,9 @@ def _format_home_drill(drill: dict) -> DrillHomeResponse:
 
 
 @router.get("/drills", response_model=SingleResponse[DrillHomeResponse])
+@llm_heavy_rate_limit
 async def get_drills(
+    request: Request,
     current_user: JWTUser = Depends(get_current_user),
 ) -> SingleResponse[DrillHomeResponse]:
     """

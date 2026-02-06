@@ -52,5 +52,8 @@ class Settings(BaseSettings):
     # User Summary Model
     llm_user_summary_model: str = "gemini-3-pro-preview"
 
+    # Rate Limiting Configuration
+    rate_limit_enabled: bool = True
+
 
 settings = Settings()

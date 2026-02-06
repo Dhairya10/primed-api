@@ -2,7 +2,7 @@
 
 import logging
 
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, Request, status
 
 from src.prep.features.onboarding.models import (
     UserProfileRequest,
@@ -13,6 +13,7 @@ from src.prep.services import PostHogService
 from src.prep.services.auth.dependencies import get_current_user
 from src.prep.services.auth.models import JWTUser
 from src.prep.services.database import get_query_builder
+from src.prep.services.rate_limiter import default_rate_limit, write_rate_limit
 
 logger = logging.getLogger(__name__)
 
@@ -61,7 +62,9 @@ router = APIRouter(prefix="/profile", tags=["onboarding"])
 
 
 @router.get("/me", response_model=UserProfileResponse)
+@default_rate_limit
 async def get_user_profile(
+    request: Request,
     current_user: JWTUser = Depends(get_current_user),
 ) -> UserProfileResponse:
     """
@@ -143,8 +146,10 @@ async def get_user_profile(
 
 
 @router.put("/me", response_model=UserProfileUpdateResponse)
+@write_rate_limit
 async def update_user_profile(
-    request: UserProfileRequest,
+    request: Request,
+    req: UserProfileRequest,
     current_user: JWTUser = Depends(get_current_user),
 ) -> UserProfileUpdateResponse:
     """
@@ -168,28 +173,28 @@ async def update_user_profile(
         db = get_query_builder()
 
         # Ensure discipline defaults to 'product' if not provided
-        discipline_value = request.discipline if request.discipline else "product"
-        is_discipline_auto_assigned = request.discipline is None
+        discipline_value = req.discipline if req.discipline else "product"
+        is_discipline_auto_assigned = req.discipline is None
 
         # Prepare update data
         update_data = {
             "user_id": str(current_user.id),
             "discipline": discipline_value,
-            "first_name": request.first_name,
+            "first_name": req.first_name,
         }
 
         # Set onboarding_completed based on whether discipline and first_name are provided
         # If user explicitly sets it, use that value; otherwise set to True
-        if request.onboarding_completed is not None:
-            update_data["onboarding_completed"] = request.onboarding_completed
+        if req.onboarding_completed is not None:
+            update_data["onboarding_completed"] = req.onboarding_completed
         else:
             update_data["onboarding_completed"] = True
 
-        if request.last_name is not None:
-            update_data["last_name"] = request.last_name
+        if req.last_name is not None:
+            update_data["last_name"] = req.last_name
 
-        if request.bio is not None:
-            update_data["bio"] = request.bio
+        if req.bio is not None:
+            update_data["bio"] = req.bio
 
         # Check if profile exists
         existing = db.list_records(

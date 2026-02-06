@@ -1,7 +1,7 @@
 """API handlers for skills endpoints."""
 
 import logging
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Request
 
 from src.prep.features.skills.schemas import (
     SessionPerformance,
@@ -14,6 +14,7 @@ from src.prep.features.skills.schemas import (
 from src.prep.services.auth.dependencies import get_current_user
 from src.prep.services.auth.models import JWTUser
 from src.prep.services.database import get_query_builder
+from src.prep.services.rate_limiter import default_rate_limit
 
 router = APIRouter()
 logger = logging.getLogger(__name__)
@@ -72,7 +73,9 @@ def get_zone(score: float, is_tested: bool) -> SkillZone | None:
 
 
 @router.get("/skills/me", response_model=SkillMapResponse)
+@default_rate_limit
 async def get_skill_map(
+    request: Request,
     current_user: JWTUser = Depends(get_current_user),
 ) -> SkillMapResponse:
     """
@@ -143,7 +146,9 @@ async def get_skill_map(
 
 
 @router.get("/skills/me/{skill_id}/history", response_model=SkillHistoryResponse)
+@default_rate_limit
 async def get_skill_history(
+    request: Request,
     skill_id: str,
     current_user: JWTUser = Depends(get_current_user),
 ) -> SkillHistoryResponse:

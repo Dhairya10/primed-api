@@ -24,6 +24,8 @@ logger = logging.getLogger(__name__)
 router = APIRouter()
 
 
+# Note: slowapi does not support WebSocket rate limiting
+# WebSocket rate limiting would need to be implemented manually if required
 @router.websocket("/ws/drill/{drill_session_id}")
 async def voice_drill_session(
     websocket: WebSocket,

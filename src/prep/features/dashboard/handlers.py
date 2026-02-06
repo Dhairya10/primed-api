@@ -1,6 +1,9 @@
-"""API handlers for dashboard endpoints."""
+"""API handlers for dashboard screen."""
 
-from fastapi import APIRouter, Depends, HTTPException, Query
+import logging
+from typing import Any
+
+from fastapi import APIRouter, Depends, HTTPException, Query, Request
 
 from src.prep.config import settings
 from src.prep.features.dashboard.validators import (
@@ -10,12 +13,15 @@ from src.prep.features.dashboard.validators import (
 from src.prep.services.auth.dependencies import get_current_user
 from src.prep.services.auth.models import JWTUser
 from src.prep.services.database import get_query_builder
+from src.prep.services.rate_limiter import default_rate_limit
 
 router = APIRouter()
 
 
 @router.get("/dashboard/drills", response_model=DashboardSessionsResponse)
+@default_rate_limit
 async def get_dashboard_drills(
+    request: Request,
     search: str | None = Query(None, description="Search drill titles"),
     problem_type: str | None = Query(None, description="Filter by problem type"),
     skill_id: str | None = Query(None, description="Filter sessions that tested this skill"),

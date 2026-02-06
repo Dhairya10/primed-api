@@ -3,11 +3,16 @@
 import logging
 from contextlib import asynccontextmanager
 
-from fastapi import FastAPI
+from fastapi import FastAPI, Request, Response
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import JSONResponse
 from pydantic import BaseModel
+from slowapi import _rate_limit_exceeded_handler
+from slowapi.errors import RateLimitExceeded
+from slowapi.middleware import SlowAPIMiddleware
 
 from src.prep.config import settings
+from src.prep.services.rate_limiter import limiter
 from src.prep.features.dashboard import router as dashboard_router
 from src.prep.features.drill_sessions import router as drill_sessions_router
 from src.prep.features.home_screen import router as home_router
@@ -93,6 +98,11 @@ app = FastAPI(
     lifespan=lifespan,
 )
 
+# Add rate limiting state and error handler
+if settings.rate_limit_enabled:
+    app.state.limiter = limiter
+    app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
+
 origins = settings.cors_origins.split(",")
 logger.info(f"Origins : {origins}")
 print(f"Origins : {origins}")
@@ -104,6 +114,10 @@ app.add_middleware(
     allow_methods=["GET", "POST", "PUT", "DELETE", "PATCH"],
     allow_headers=["Content-Type", "Authorization"],
 )
+
+# Add rate limiting middleware (after CORS)
+if settings.rate_limit_enabled:
+    app.add_middleware(SlowAPIMiddleware)
 
 app.include_router(home_router, prefix=settings.api_v1_prefix, tags=["home"])
 app.include_router(

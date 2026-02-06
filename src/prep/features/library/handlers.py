@@ -1,11 +1,12 @@
 """API handlers for library endpoints."""
 
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, Depends, HTTPException, Query, Request
 
 from src.prep.features.home_screen.handlers import PaginatedResponse, SingleResponse
 from src.prep.services.auth.dependencies import get_current_user
 from src.prep.services.auth.models import JWTUser
 from src.prep.services.database import get_query_builder
+from src.prep.services.rate_limiter import default_rate_limit
 from src.prep.services.database.models import DrillResponse, ProblemType
 
 router = APIRouter()
@@ -39,7 +40,9 @@ DISCIPLINE_PROBLEM_TYPES = {
 
 
 @router.get("/drills", response_model=PaginatedResponse[DrillResponse])
+@default_rate_limit
 async def get_library_drills(
+    request: Request,
     query: str | None = Query(None, min_length=1, description="Optional search by title"),
     problem_type: ProblemType | None = Query(None, description="Filter by problem type"),
     skills: list[str] | None = Query(
@@ -268,7 +271,9 @@ async def get_library_drills(
 from src.prep.features.library.schemas import LibraryMetadataResponse
 
 @router.get("/metadata", response_model=SingleResponse[LibraryMetadataResponse])
+@default_rate_limit
 async def get_library_metadata(
+    request: Request,
     current_user: JWTUser = Depends(get_current_user),
 ) -> SingleResponse[LibraryMetadataResponse]:
     """
