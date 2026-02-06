@@ -88,8 +88,15 @@ class VoiceSessionManager:
     ) -> VoiceSession:
         """Create a new voice session."""
         async with self._lock:
+            # Clean up existing session if it exists (handles reconnection)
             if session_id in self._active_sessions:
-                raise ValueError(f"Session {session_id} already exists")
+                logger.warning(
+                    "Session %s already exists, cleaning up before creating new session",
+                    session_id,
+                )
+                existing_session = self._active_sessions.pop(session_id)
+                existing_session.live_queue.close()
+                existing_session.is_active = False
 
             if len(self._active_sessions) >= settings.voice_session_max_concurrent:
                 raise ValueError("Voice session limit reached")
