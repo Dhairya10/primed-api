@@ -105,7 +105,6 @@ if settings.rate_limit_enabled:
 
 origins = settings.cors_origins.split(",")
 logger.info(f"Origins : {origins}")
-print(f"Origins : {origins}")
 
 app.add_middleware(
     CORSMiddleware,

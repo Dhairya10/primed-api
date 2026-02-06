@@ -85,9 +85,9 @@ class JWTValidator:
         Example:
             >>> try:
             ...     claims = await validator.verify_token(token)
-            ...     print(f"User: {claims['sub']}")
+            ...     logger.debug(f"User: {claims['sub']}")
             ... except JWTError as e:
-            ...     print(f"Invalid token: {e}")
+            ...     logger.warning(f"Invalid token: {e}")
         """
         try:
             # Step 1: Decode header to get key ID (kid) without verification
