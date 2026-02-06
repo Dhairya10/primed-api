@@ -93,34 +93,39 @@ async def get_user_profile(
     try:
         db = get_query_builder()
 
-        # Extract first name from OAuth metadata (Google, etc.)
-        full_name = current_user.user_metadata.get("full_name", "")
-        first_name = full_name.split()[0] if full_name else ""
-
-        # Atomic upsert: create if doesn't exist, fetch if it does
-        # This eliminates the race condition between check and insert
-        profile_data = db.upsert_record(
+        # Try to fetch existing profile first
+        profile_data = db.get_by_field(
             table="user_profile",
-            record={
-                "user_id": str(current_user.id),
-                "email": current_user.email,
-                "first_name": first_name or None,
-                "last_name": None,
-                "discipline": None,
-                "onboarding_completed": False,
-            },
-            conflict_columns=["user_id"],
+            field="user_id",
+            value=str(current_user.id),
         )
 
-        # Track JIT provisioning event (only if profile was newly created)
-        # Note: Supabase upsert doesn't tell us if it was insert or update
-        # So we check if skill scores exist as a proxy for "is new user"
-        existing_scores = db.list_records(
-            "user_skill_scores", filters={"user_id": str(current_user.id)}, limit=1
-        )
+        # If profile doesn't exist, create it (JIT provisioning)
+        if not profile_data:
+            # Extract first name from OAuth metadata
+            full_name = current_user.user_metadata.get("full_name", "")
+            first_name = full_name.split()[0] if full_name else ""
 
-        if not existing_scores:
-            # This is likely a new user, track the event
+            # Create new profile with defaults
+            profile_data = db.insert_record(
+                table="user_profile",
+                data={
+                    "user_id": str(current_user.id),
+                    "email": current_user.email,
+                    "first_name": first_name or None,
+                    "last_name": None,
+                    "discipline": None,
+                    "onboarding_completed": False,  # Only for NEW profiles
+                },
+            )
+
+            if not profile_data:
+                raise HTTPException(
+                    status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                    detail="Failed to create profile.",
+                )
+
+            # Track JIT provisioning event
             posthog_service = PostHogService()
             posthog_service.capture(
                 distinct_id=str(current_user.id),

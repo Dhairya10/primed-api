@@ -10,6 +10,7 @@ class Settings(BaseSettings):
 
     supabase_url: str = "https://test.supabase.co"
     supabase_anon_key: str = "test-anon-key"
+    supabase_service_role_key: str = "test-service-role-key"
 
     # JWT Verification Configuration
     use_local_jwt_verification: bool = True

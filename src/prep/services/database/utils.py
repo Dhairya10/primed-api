@@ -6,7 +6,7 @@ from uuid import UUID
 
 from supabase import Client
 
-from src.prep.services.database.connection import get_supabase_client
+from src.prep.services.database.connection import get_supabase_admin_client, get_supabase_client
 
 logger = logging.getLogger(__name__)
 
@@ -430,18 +430,25 @@ class SupabaseQueryBuilder:
             raise ValueError(f"Unsupported enum type: {enum_type}")
 
 
-def get_query_builder(client: Client | None = None) -> SupabaseQueryBuilder:
+def get_query_builder(client: Client | None = None, use_admin: bool = True) -> SupabaseQueryBuilder:
     """
     Get instance of SupabaseQueryBuilder.
 
     Args:
         client: Optional Supabase client (uses default if None)
+        use_admin: If True (default), uses admin client that bypasses RLS.
+                   Set to False for operations that should respect RLS policies.
 
     Returns:
         SupabaseQueryBuilder instance
 
     Example:
-        >>> db = get_query_builder()
+        >>> db = get_query_builder()  # Uses admin client (bypasses RLS)
         >>> problem = db.get_by_id("drills", problem_id)
+
+        >>> db = get_query_builder(use_admin=False)  # Respects RLS
+        >>> response = db.list_records("user_data")
     """
+    if client is None:
+        client = get_supabase_admin_client() if use_admin else get_supabase_client()
     return SupabaseQueryBuilder(client)
