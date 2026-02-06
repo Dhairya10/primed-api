@@ -21,6 +21,7 @@ dependencies = [
     "websockets>=14.0",
     "python-jose[cryptography]>=3.5.0",
     "opik>=1.9.99",
+    "tenacity>=8.2.3",
 ]
 
 [project.optional-dependencies]

@@ -5,6 +5,7 @@ from collections.abc import AsyncGenerator
 from typing import Any
 
 from google import genai
+from tenacity import retry, stop_after_attempt, wait_exponential
 
 from src.prep.config import settings
 from src.prep.services.llm.base import BaseLLMProvider, LLMMessage, LLMResponse
@@ -121,9 +122,19 @@ class GeminiProvider(BaseLLMProvider):
         response = await self.generate(user_message)
         yield response.content
 
+    @retry(
+        stop=stop_after_attempt(3),
+        wait=wait_exponential(multiplier=1, min=2, max=10),
+        reraise=True,
+    )
     async def _generate_complete(self, request_params: dict[str, Any]) -> LLMResponse:
         """
-        Generate complete response.
+        Generate complete response with automatic retry logic.
+
+        Automatically retries on transient API failures with exponential backoff:
+        - Maximum 3 attempts
+        - Exponential backoff: 2s → 4s → 8s (capped at 10s)
+        - Re-raises exception after exhausting retries
 
         Args:
             request_params: Interactions API request parameters
@@ -132,7 +143,7 @@ class GeminiProvider(BaseLLMProvider):
             LLMResponse with content and metadata
 
         Raises:
-            Exception: If generation fails
+            Exception: If generation fails after max retries
         """
         try:
             interaction = await self.client.aio.interactions.create(**request_params)
