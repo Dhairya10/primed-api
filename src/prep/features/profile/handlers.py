@@ -2,12 +2,13 @@
 
 import logging
 
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, Request, HTTPException, status
 
-from src.prep.auth.dependencies import get_current_user
-from src.prep.auth.models import JWTUser
-from src.prep.database import get_query_builder
 from src.prep.features.profile.models import ProfileScreenResponse
+from src.prep.services.auth.dependencies import get_current_user
+from src.prep.services.auth.models import JWTUser
+from src.prep.services.database import get_query_builder
+from src.prep.services.rate_limiter import default_rate_limit
 
 logger = logging.getLogger(__name__)
 
@@ -15,7 +16,9 @@ router = APIRouter(prefix="/profile", tags=["profile"])
 
 
 @router.get("/screen", response_model=ProfileScreenResponse)
+@default_rate_limit
 async def get_profile_screen_data(
+    request: Request,
     current_user: JWTUser = Depends(get_current_user),
 ) -> ProfileScreenResponse:
     """
@@ -33,8 +36,7 @@ async def get_profile_screen_data(
         current_user: User data from validated JWT token
 
     Returns:
-        Profile screen data with first_name, last_name, email, num_interviews, num_drills, and
-        discipline
+        Profile screen data with first_name, last_name, email, num_drills_left, and discipline
 
     Raises:
         HTTPException: 404 if user profile not found
@@ -45,8 +47,7 @@ async def get_profile_screen_data(
             "first_name": "John",
             "last_name": "Doe",
             "email": "john.doe@example.com",
-            "num_interviews": 5,
-            "num_drills": 10,
+            "num_drills_left": 10,
             "discipline": "product"
         }
     """
@@ -72,8 +73,7 @@ async def get_profile_screen_data(
             first_name=profile.get("first_name"),
             last_name=profile.get("last_name"),
             email=profile["email"],
-            num_interviews=profile.get("num_interviews", 0),
-            num_drills=profile.get("num_drills", 0),
+            num_drills_left=profile.get("num_drills_left", 0),
             discipline=profile.get("discipline"),
         )
 

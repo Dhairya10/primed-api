@@ -3,21 +3,24 @@
 from datetime import datetime
 from uuid import UUID
 
-from pydantic import BaseModel, Field
+from pydantic import AliasChoices, BaseModel, Field
 
 
 class CheckDrillEligibilityResponse(BaseModel):
     """Eligibility check for drills (similar to interviews)."""
 
     eligible: bool = Field(description="Whether user is eligible to start a drill")
-    num_drills: int = Field(ge=0, description="Number of drills remaining")
+    num_drills_left: int = Field(ge=0, description="Number of drill credits remaining")
     message: str = Field(description="Human-readable message about eligibility status")
 
 
 class DrillSessionStartRequest(BaseModel):
     """Request model for starting a drill session."""
 
-    problem_id: UUID
+    drill_id: UUID = Field(
+        validation_alias=AliasChoices("drill_id", "problem_id"),
+        description="Drill ID to start (accepts legacy problem_id)",
+    )
 
 
 class DrillSessionStartResponse(BaseModel):

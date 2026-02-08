@@ -1,15 +1,15 @@
 """Interview feedback evaluation service."""
 
 from src.prep.features.feedback.schemas import (
-    CriticalGap,
-    InterviewFeedback,
-    OverallAssessment,
+    DrillFeedback,
+    SkillFeedback,
+    SkillPerformance,
 )
 from src.prep.features.feedback.service import FeedbackService
 
 __all__ = [
     "FeedbackService",
-    "InterviewFeedback",
-    "OverallAssessment",
-    "CriticalGap",
+    "DrillFeedback",
+    "SkillFeedback",
+    "SkillPerformance",
 ]

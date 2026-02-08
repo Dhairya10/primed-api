@@ -5,7 +5,7 @@ from uuid import UUID
 
 from pydantic import BaseModel, Field
 
-from src.prep.database.models import EvaluationStatus, ProblemType
+from src.prep.services.database.models import EvaluationStatus, ProblemType
 
 
 class AttemptSummary(BaseModel):
@@ -116,6 +116,7 @@ class DashboardSession(BaseModel):
     product_logo_url: str | None
     completed_at: str
     problem_type: str | None
+    has_feedback: bool
 
 
 class DashboardSessionsResponse(BaseModel):
@@ -123,4 +124,3 @@ class DashboardSessionsResponse(BaseModel):
 
     data: list[DashboardSession]
     total: int
-

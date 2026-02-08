@@ -1,40 +1,38 @@
 """
 LLM provider factory.
 
-STATUS: Not currently used, KEPT for future features.
+This module provides a factory function for creating LLM provider instances.
+Currently supports Gemini, with the abstraction kept for future extensibility.
 
-This module provides abstract LLM providers for future use.
-Currently unused because:
-- Evaluation features are disabled (being rebuilt)
-
-Will be used for future features like:
-- Custom interview question generation
-- Real-time interview analysis
-- Advanced analytics features
-- Multi-model support
+Used by:
+- Drill selection (home_screen)
+- Feedback generation (feedback service)
+- User profile updates (feedback service)
 
 Available providers:
-- AnthropicProvider: Claude models with extended thinking
-- GeminiProvider: Google Gemini models with thinking mode
+- GeminiProvider: Google Gemini models with thinking mode and structured output
 
-Usage (when needed):
+Usage:
     >>> from src.prep.services.llm import get_llm_provider
-    >>> llm = get_llm_provider(provider_name="anthropic", model="claude-3-5-sonnet")
+    >>> llm = get_llm_provider(model="gemini-2.0-flash-exp")
     >>> response = await llm.generate("Hello")
 """
 
-import os
-
 from src.prep.config import settings
-from src.prep.services.llm.anthropic import AnthropicProvider
+from src.prep.features.feedback.schemas import DrillFeedback
+from src.prep.services.llm.api_keys import resolve_google_api_key
 from src.prep.services.llm.base import BaseLLMProvider
 from src.prep.services.llm.gemini import GeminiProvider
+from src.prep.services.llm.schemas import (
+    DrillRecommendation,
+    SkillEvaluation,
+    SkillScoreChange,
+    UserProfileUpdate,
+)
 
 # Provider registry
 LLM_PROVIDERS: dict[str, type[BaseLLMProvider]] = {
-    "anthropic": AnthropicProvider,
     "gemini": GeminiProvider,
-    # "openai": OpenAIProvider,  # Add when implementing GPT support
 }
 
 
@@ -48,24 +46,29 @@ def get_llm_provider(
     Factory function to get LLM provider instance.
 
     Args:
-        provider_name: Provider name ('anthropic', 'gemini', 'openai')
-                      Defaults to settings.voice_agent_llm_provider
-        model: Model identifier. Defaults to settings.voice_agent_llm_model
+        provider_name: Provider name ('gemini'). Defaults to 'gemini'.
+        model: Model identifier (required). Examples: 'gemini-2.0-flash-exp', 'gemini-2.5-pro'
         system_prompt: System instruction
-        **kwargs: Additional provider-specific config
+        **kwargs: Additional provider-specific config (e.g., enable_thinking, thinking_level, response_format)
 
     Returns:
         Configured LLM provider instance
 
     Raises:
         ValueError: If provider not supported
+        ValueError: If model not provided
+        ValueError: If API key not found for provider
 
     Example:
-        >>> llm = get_llm_provider(system_prompt="You are an interviewer")
+        >>> llm = get_llm_provider(
+        ...     model="gemini-2.0-flash-exp",
+        ...     system_prompt="You are an interviewer"
+        ... )
         >>> response = await llm.generate("Hello")
     """
-    provider_name = provider_name or settings.voice_agent_llm_provider
-    model = model or settings.voice_agent_llm_model
+    provider_name = provider_name or "gemini"  # Default to Gemini
+    if not model:
+        raise ValueError("Model parameter is required")
 
     if provider_name not in LLM_PROVIDERS:
         raise ValueError(
@@ -74,18 +77,27 @@ def get_llm_provider(
 
     provider_class = LLM_PROVIDERS[provider_name]
 
-    # Get API key from environment
+    # Get API key from environment/settings
     api_key_map = {
-        "anthropic": os.getenv("ANTHROPIC_API_KEY") or settings.anthropic_api_key,
-        "gemini": os.getenv("GEMINI_API_KEY") or settings.gemini_api_key,
-        "openai": os.getenv("OPENAI_API_KEY") or settings.openai_api_key,
+        "gemini": resolve_google_api_key(),
     }
     api_key = api_key_map.get(provider_name)
 
     if not api_key:
         raise ValueError(f"API key not found for provider: {provider_name}")
 
+    kwargs.setdefault("fallback_model", settings.llm_fallback_model)
+
     return provider_class(model=model, api_key=api_key, system_prompt=system_prompt, **kwargs)
 
 
-__all__ = ["get_llm_provider", "BaseLLMProvider", "AnthropicProvider", "GeminiProvider"]
+__all__ = [
+    "get_llm_provider",
+    "BaseLLMProvider",
+    "GeminiProvider",
+    "DrillFeedback",
+    "SkillEvaluation",
+    "SkillScoreChange",
+    "DrillRecommendation",
+    "UserProfileUpdate",
+]

@@ -1,6 +1,8 @@
 """Pydantic models for drill feedback structured output."""
 
+from datetime import datetime
 from enum import Enum
+from uuid import UUID
 
 from pydantic import BaseModel, Field
 
@@ -9,8 +11,8 @@ class SkillPerformance(str, Enum):
     """Skill performance evaluation levels."""
 
     DEMONSTRATED = "Demonstrated"
-    PARTIALLY = "Partially"
-    DID_NOT_DEMONSTRATE = "Did not demonstrate"
+    PARTIAL = "Partial"
+    MISSED = "Missed"
 
 
 class SkillFeedback(BaseModel):
@@ -33,3 +35,20 @@ class DrillFeedback(BaseModel):
 
     # Optional metadata (added during storage)
     evaluation_meta: dict | None = None
+
+
+class SessionFeedbackData(BaseModel):
+    """Feedback payload for a drill session."""
+
+    session_id: UUID
+    drill_id: UUID
+    drill_title: str
+    product_logo_url: str | None = None
+    completed_at: datetime | None = None
+    feedback: DrillFeedback | None = None
+
+
+class SessionFeedbackResponse(BaseModel):
+    """Response wrapper for drill session feedback."""
+
+    data: SessionFeedbackData

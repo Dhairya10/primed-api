@@ -1,22 +1,28 @@
 """API handlers for home screen endpoints."""
 
-from typing import Any
+import logging
+from typing import Generic, TypeVar
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Request
 from pydantic import BaseModel
 
-from src.prep.auth.dependencies import get_current_user
-from src.prep.auth.models import JWTUser
-from src.prep.database import get_query_builder
-from src.prep.database.models import DrillResponse
+from src.prep.services.auth.dependencies import get_current_user
+from src.prep.services.auth.models import JWTUser
+from src.prep.services.database import get_query_builder
+from src.prep.services.database.models import DrillHomeResponse
+from src.prep.services.rate_limiter import default_rate_limit, llm_heavy_rate_limit
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter()
 
+T = TypeVar("T")
 
-class PaginatedResponse(BaseModel):
+
+class PaginatedResponse(BaseModel, Generic[T]):
     """Standard paginated response wrapper."""
 
-    data: list[Any]
+    data: list[T]
     count: int
     total: int
     limit: int
@@ -24,10 +30,10 @@ class PaginatedResponse(BaseModel):
     has_more: bool
 
 
-class SingleResponse(BaseModel):
+class SingleResponse(BaseModel, Generic[T]):
     """Standard single item response wrapper."""
 
-    data: Any
+    data: T
 
 
 class ErrorResponse(BaseModel):
@@ -55,10 +61,12 @@ GREETING_TEMPLATES = [
 ]
 
 
-@router.get("/greeting", response_model=SingleResponse)
+@router.get("/greeting", response_model=SingleResponse[GreetingResponse])
+@default_rate_limit
 async def get_home_greeting(
+    request: Request,
     current_user: JWTUser = Depends(get_current_user),
-) -> SingleResponse:
+) -> SingleResponse[GreetingResponse]:
     """
     Get personalized home screen greeting.
 
@@ -95,7 +103,7 @@ async def get_home_greeting(
                 detail="User profile not found.",
             )
 
-        first_name = profile[0].get("first_name", "")
+        first_name = profile[0].get("first_name") or "there"  # CHANGED: Default fallback
 
         # Count completed drill sessions
         session_count = db.count_records(
@@ -176,9 +184,7 @@ def _determine_target_skill(user_id: str) -> dict:
 
     exclude_set = set()
     if last_session.data:
-        exclude_set = {
-            e["skill_id"] for e in last_session.data[0].get("skill_evaluations", [])
-        }
+        exclude_set = {e["skill_id"] for e in last_session.data[0].get("skill_evaluations", [])}
 
     # Categorize skills
     red_skills = []
@@ -243,7 +249,10 @@ def _find_eligible_drills(user_id: str, discipline: str, target_skill: dict) -> 
     # Get drills that test target skill
     skill_drills = (
         db.client.table("drill_skills")
-        .select("drill_id, drills(id, title, description, problem_type, discipline, is_active)")
+        .select(
+            "drill_id, drills(id, title, problem_statement, context, "
+            "problem_type, discipline, is_active, product_id)"
+        )
         .eq("skill_id", target_skill["id"])
         .execute()
     )
@@ -283,12 +292,10 @@ async def _llm_select_drill(drills: list[dict], target_skill: dict, user_id: str
     Returns:
         Selected drill with recommendation_reasoning field added
     """
-    from pathlib import Path
-
-    from src.prep.services.llm import get_llm_provider
     from src.prep.config import settings
-    from src.prep.utils.logging import logger
-    from src.prep.db.query_builder import get_query_builder
+    from src.prep.services.database import get_query_builder
+    from src.prep.services.llm import get_llm_provider
+    from src.prep.services.prompts import get_prompt_manager
 
     try:
         # Get user summary for context
@@ -299,9 +306,11 @@ async def _llm_select_drill(drills: list[dict], target_skill: dict, user_id: str
         # Determine targeting reason based on skill zone
         zone = target_skill.get("zone")
         if zone == "red":
-            targeting_reason = f"This skill ({target_skill['name']}) needs immediate attention (red zone)."
+            targeting_reason = (
+                f"This skill ({target_skill['name']}) needs immediate attention"
+            )
         elif zone == "yellow":
-            targeting_reason = f"This skill ({target_skill['name']}) is developing and needs practice (yellow zone)."
+            targeting_reason = f"This skill ({target_skill['name']}) is developing and needs practice"
         elif not target_skill.get("is_tested"):
             targeting_reason = f"This skill ({target_skill['name']}) hasn't been tested yet."
         else:
@@ -310,38 +319,58 @@ async def _llm_select_drill(drills: list[dict], target_skill: dict, user_id: str
         # Format eligible drills for prompt
         drills_text = "\n\n".join(
             [
-                f"**Drill {i+1}**\n"
+                f"**Drill {i + 1}**\n"
                 f"- ID: {d['id']}\n"
                 f"- Title: {d.get('title', 'Unknown')}\n"
-                f"- Description: {d.get('description', 'No description')}\n"
+                f"- Prompt: {d.get('problem_statement') or d.get('context') or 'No prompt provided'}\n"
                 f"- Problem Type: {d.get('problem_type', 'N/A')}"
                 for i, d in enumerate(drills)
             ]
         )
 
-        # Load prompt template from file
-        prompt_path = Path("prompts/drill_recommendation.md")
-        prompt_template = prompt_path.read_text()
-
-        # Compile prompt with variables
-        prompt = (
-            prompt_template.replace("{user_summary}", user_summary or "No user summary available")
-            .replace("{skill_name}", target_skill["name"])
-            .replace("{skill_description}", target_skill.get("description", ""))
-            .replace("{targeting_reason}", targeting_reason)
-            .replace("{eligible_drills}", drills_text)
+        # Load and format prompt from Opik
+        prompt_mgr = get_prompt_manager()
+        prompt = prompt_mgr.format_prompt(
+            prompt_name="drill-recommendation",
+            variables={
+                "user_summary": user_summary or "No user summary available",
+                "skill_name": target_skill["name"],
+                "skill_description": target_skill.get("description", ""),
+                "targeting_reason": targeting_reason,
+                "eligible_drills": drills_text,
+            },
         )
 
         # Initialize LLM provider
+        from src.prep.services.llm import DrillRecommendation
+
         llm = get_llm_provider(
             provider_name="gemini",
             model=settings.llm_drill_selection_model,
             system_prompt="You are an AI interview coach selecting practice drills.",
-            temperature=0.3,
+            response_format=DrillRecommendation.model_json_schema(),
+            enable_thinking=False,
+            temperature=0.7,
+            max_tokens=2048,
         )
 
         # Generate selection
         response = await llm.generate(prompt)
+
+        # Log for debugging - defensive against malformed response
+        try:
+            response_content = response.content if response.content else ""
+            logger.info(
+                "LLM drill selection response preview (length=%d): %s",
+                len(response_content),
+                response_content[:500],
+            )
+        except Exception as log_error:
+            logger.warning("Failed to log drill selection response: %s", log_error)
+
+        # Check for empty response before parsing
+        if not response.content or not response.content.strip():
+            raise ValueError("LLM returned empty response for drill selection")
 
         # Parse JSON from response (handle code blocks)
         import json
@@ -351,6 +380,10 @@ async def _llm_select_drill(drills: list[dict], target_skill: dict, user_id: str
         json_match = re.search(r"```(?:json)?\s*({.*?})\s*```", content, re.DOTALL)
         if json_match:
             content = json_match.group(1)
+
+        # Validate content before parsing
+        if not content:
+            raise ValueError("No JSON content found in LLM response for drill selection")
 
         selection = json.loads(content)
         selected_id = selection["drill_id"]
@@ -402,41 +435,55 @@ def invalidate_recommendation_cache(user_id: str) -> None:
     )
 
 
-def _enrich_drill(drill: dict, user_id: str, db) -> dict:
-    """Enrich drill with skills_tested and is_completed fields."""
-    # Get skills tested for this drill
+def _enrich_drill(drill: dict, db) -> dict:
+    """Enrich drill with skills and product_url fields."""
+    # Get skills for this drill
     skills_tested_response = (
         db.client.table("drill_skills")
         .select("skills(id, name)")
         .eq("drill_id", drill["id"])
         .execute()
     )
-    
-    drill["skills_tested"] = [
+
+    drill["skills"] = [
         {"id": ds["skills"]["id"], "name": ds["skills"]["name"]}
         for ds in skills_tested_response.data
     ]
-    
-    # Check if user has completed this drill
-    drill["is_completed"] = (
-        db.count_records(
-            "drill_sessions",
-            filters={
-                "drill_id": drill["id"],
-                "user_id": user_id,
-                "status": "completed",
-            },
-        )
-        > 0
-    )
-    
+
+    # Resolve product_url from products.logo_url
+    product_url = None
+    product = drill.get("products")
+    if isinstance(product, dict):
+        product_url = product.get("logo_url")
+    elif drill.get("product_id"):
+        product_row = db.get_by_id("products", drill["product_id"], columns="logo_url")
+        if product_row:
+            product_url = product_row.get("logo_url")
+
+    drill["product_url"] = product_url
+
     return drill
 
 
-@router.get("/drills", response_model=PaginatedResponse)
+def _format_home_drill(drill: dict) -> DrillHomeResponse:
+    """Return validated drill payload for home screen response."""
+    payload = {
+        "id": drill.get("id"),
+        "title": drill.get("title", ""),
+        "problem_type": drill.get("problem_type"),
+        "skills": drill.get("skills", []),
+        "product_url": drill.get("product_url"),
+        "recommendation_reasoning": drill.get("recommendation_reasoning"),
+    }
+    return DrillHomeResponse.model_validate(payload)
+
+
+@router.get("/drills", response_model=SingleResponse[DrillHomeResponse])
+@llm_heavy_rate_limit
 async def get_drills(
+    request: Request,
     current_user: JWTUser = Depends(get_current_user),
-) -> PaginatedResponse:
+) -> SingleResponse[DrillHomeResponse]:
     """
     Get personalized drill recommendation for the user.
 
@@ -464,20 +511,14 @@ async def get_drills(
 
     Example Response:
         {
-            "data": [
-                {
-                    "id": "uuid",
-                    "display_title": "Practice STAR method responses",
-                    "discipline": "product",
-                    "problem_type": "behavioral",
-                    "recommendation_reasoning": "This drill focuses on Communication. This skill needs immediate attention (red zone)."
-                }
-            ],
-            "count": 1,
-            "total": 1,
-            "limit": 1,
-            "offset": 0,
-            "has_more": false
+            "data": {
+                "id": "uuid",
+                "title": "Practice STAR method responses",
+                "problem_type": "behavioral",
+                "skills": [{"id": "uuid", "name": "Communication"}],
+                "product_url": "https://example.com/logo.png",
+                "recommendation_reasoning": "This drill focuses on Communication. This skill needs immediate attention (red zone)."
+            }
         }
     """
     try:
@@ -487,9 +528,7 @@ async def get_drills(
         user_id = str(current_user.id)
 
         # Get user's profile
-        profile_data = db.list_records(
-            "user_profile", filters={"user_id": user_id}, limit=1
-        )
+        profile_data = db.list_records("user_profile", filters={"user_id": user_id}, limit=1)
 
         if not profile_data:
             raise HTTPException(
@@ -509,16 +548,9 @@ async def get_drills(
         if cached:
             drill = db.get_by_id("drills", cached["drill_id"])
             if drill:
-                drill = _enrich_drill(drill, user_id, db)
+                drill = _enrich_drill(drill, db)
                 drill["recommendation_reasoning"] = cached["reasoning"]
-                return PaginatedResponse(
-                    data=[drill],
-                    count=1,
-                    total=1,
-                    limit=1,
-                    offset=0,
-                    has_more=False,
-                )
+                return SingleResponse(data=_format_home_drill(drill))
 
         # Compute new recommendation
         target_skill = _determine_target_skill(user_id)
@@ -540,30 +572,23 @@ async def get_drills(
                     detail="No drills available for your discipline.",
                 )
             selected = random.choice(all_drills)
-            selected = _enrich_drill(selected, user_id, db)
-            selected["recommendation_reasoning"] = "Here's a challenge to keep you sharp!"
+            selected = _enrich_drill(selected, db)
+            # selected["recommendation_reasoning"] = "Here's a challenge to keep you sharp!"
         elif len(eligible_drills) == 1:
             selected = eligible_drills[0]
-            selected = _enrich_drill(selected, user_id, db)
-            selected["recommendation_reasoning"] = (
-                f"This drill focuses on {target_skill['name']}, an area for growth."
-            )
+            selected = _enrich_drill(selected, db)
+            # selected["recommendation_reasoning"] = (
+            #     f"This drill focuses on {target_skill['name']}, an area for growth."
+            # )
         else:
             # LLM selection with 2+ options
             selected = await _llm_select_drill(eligible_drills, target_skill, user_id)
-            selected = _enrich_drill(selected, user_id, db)
+            selected = _enrich_drill(selected, db)
 
         # Cache the recommendation
         _cache_recommendation(user_id, selected, target_skill)
 
-        return PaginatedResponse(
-            data=[selected],
-            count=1,
-            total=1,
-            limit=1,
-            offset=0,
-            has_more=False,
-        )
+        return SingleResponse(data=_format_home_drill(selected))
 
     except HTTPException:
         raise

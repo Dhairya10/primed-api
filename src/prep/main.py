@@ -3,11 +3,16 @@
 import logging
 from contextlib import asynccontextmanager
 
-from fastapi import FastAPI
+from fastapi import FastAPI, Request, Response
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import JSONResponse
+from pydantic import BaseModel
+from slowapi import _rate_limit_exceeded_handler
+from slowapi.errors import RateLimitExceeded
+from slowapi.middleware import SlowAPIMiddleware
 
-from src.prep.auth import JWKSCache, JWTValidator, set_jwt_validator
 from src.prep.config import settings
+from src.prep.services.rate_limiter import limiter
 from src.prep.features.dashboard import router as dashboard_router
 from src.prep.features.drill_sessions import router as drill_sessions_router
 from src.prep.features.home_screen import router as home_router
@@ -15,6 +20,8 @@ from src.prep.features.library import router as library_router
 from src.prep.features.onboarding import router as onboarding_router
 from src.prep.features.profile import router as profile_router
 from src.prep.features.skills import router as skills_router
+from src.prep.services.auth import JWKSCache, JWTValidator, set_jwt_validator
+from src.prep.services.voice_agent import router as voice_router
 
 logger = logging.getLogger(__name__)
 
@@ -91,9 +98,13 @@ app = FastAPI(
     lifespan=lifespan,
 )
 
+# Add rate limiting state and error handler
+if settings.rate_limit_enabled:
+    app.state.limiter = limiter
+    app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
+
 origins = settings.cors_origins.split(",")
 logger.info(f"Origins : {origins}")
-print(f"Origins : {origins}")
 
 app.add_middleware(
     CORSMiddleware,
@@ -102,6 +113,10 @@ app.add_middleware(
     allow_methods=["GET", "POST", "PUT", "DELETE", "PATCH"],
     allow_headers=["Content-Type", "Authorization"],
 )
+
+# Add rate limiting middleware (after CORS)
+if settings.rate_limit_enabled:
+    app.add_middleware(SlowAPIMiddleware)
 
 app.include_router(home_router, prefix=settings.api_v1_prefix, tags=["home"])
 app.include_router(
@@ -114,9 +129,16 @@ app.include_router(onboarding_router, prefix=settings.api_v1_prefix, tags=["onbo
 app.include_router(profile_router, prefix=settings.api_v1_prefix, tags=["profile"])
 app.include_router(library_router, prefix=f"{settings.api_v1_prefix}/library", tags=["library"])
 app.include_router(skills_router, prefix=settings.api_v1_prefix, tags=["skills"])
+app.include_router(voice_router, prefix=settings.api_v1_prefix, tags=["voice"])
 
 
-@app.get("/health")
-async def health_check() -> dict[str, str]:
+class HealthCheckResponse(BaseModel):
+    """Health check response."""
+
+    status: str
+
+
+@app.get("/health", response_model=HealthCheckResponse)
+async def health_check() -> HealthCheckResponse:
     """Health check endpoint."""
-    return {"status": "healthy"}
+    return HealthCheckResponse(status="healthy")

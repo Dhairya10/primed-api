@@ -1,14 +1,20 @@
-"""Gemini (Google) LLM provider with thinking mode and structured output support."""
+"""Gemini (Google) LLM provider using the Interactions API."""
 
 import logging
 from collections.abc import AsyncGenerator
+from typing import Any
 
 from google import genai
-from google.genai import types
+from tenacity import retry, retry_if_not_exception_type, stop_after_attempt, wait_exponential
 
+from src.prep.config import settings
 from src.prep.services.llm.base import BaseLLMProvider, LLMMessage, LLMResponse
 
 logger = logging.getLogger(__name__)
+
+
+class NonRetryableGeminiError(RuntimeError):
+    """Signals errors that should bypass tenacity retries."""
 
 
 class GeminiProvider(BaseLLMProvider):
@@ -16,23 +22,30 @@ class GeminiProvider(BaseLLMProvider):
     Gemini LLM provider.
 
     Features:
-    - Thinking mode for enhanced reasoning (Gemini 2.5+)
-    - Structured output via response_schema
-    - Streaming support with generate_content_stream
-    - Dynamic thinking budget adjustment
-
-    Recommended models:
-    - gemini-2.0-flash-exp: Fast, good quality, low cost
-    - gemini-2.5-pro: Best reasoning with thinking mode
+    - Interactions API for stateless conversations
+    - Thinking mode with thinking_level configuration
+    - Structured output via response_format
+    - Server-side persistence opt-out (store=False)
     """
+
+    _VALID_THINKING_LEVELS = {"minimal", "low", "medium", "high"}
+    _NON_RETRYABLE_QUOTA_HINTS = (
+        "quota exceeded",
+        "limit: 0",
+        "generate_requests_per_model_per_day",
+        "resource_exhausted",
+    )
 
     def __init__(
         self,
         model: str,
         api_key: str,
         system_prompt: str,
+        fallback_model: str | None = None,
         enable_thinking: bool = False,
-        thinking_budget: int = -1,  # -1 = dynamic
+        thinking_level: str = "high",
+        response_format: dict[str, Any] | None = None,
+        store: bool = False,
         **kwargs,
     ):
         """
@@ -42,8 +55,11 @@ class GeminiProvider(BaseLLMProvider):
             model: Model identifier (e.g., 'gemini-2.0-flash-exp')
             api_key: Gemini API key
             system_prompt: System instruction
-            enable_thinking: Enable thinking mode (Gemini 2.5+ only)
-            thinking_budget: Thinking tokens (-1=dynamic, 0=disabled, 1-32768=fixed)
+            fallback_model: Optional backup model ID used when primary generation fails
+            enable_thinking: Enable thinking mode
+            thinking_level: Thinking level (minimal|low|medium|high)
+            response_format: JSON schema for structured output
+            store: Whether to persist interaction server-side
             **kwargs: Additional config (temperature, max_tokens, etc.)
 
         Raises:
@@ -51,12 +67,30 @@ class GeminiProvider(BaseLLMProvider):
         """
         super().__init__(model, api_key, system_prompt, **kwargs)
         self.client = genai.Client(api_key=api_key)
+
+        # Wrap client with Opik tracking if enabled
+        if settings.opik_enabled:
+            try:
+                from opik.integrations.genai import track_genai
+
+                self.client = track_genai(self.client)
+                logger.info("Wrapped Gemini client with Opik track_genai")
+            except Exception as e:
+                logger.warning(f"Failed to wrap Gemini client with Opik: {e}")
+
         self.enable_thinking = enable_thinking
-        self.thinking_budget = thinking_budget
+        self.thinking_level = thinking_level
+        self.response_format = response_format
+        self.store = store
+        self.fallback_model = (fallback_model or "").strip() or None
+
+        if self.enable_thinking and self.thinking_level not in self._VALID_THINKING_LEVELS:
+            raise ValueError(f"thinking_level must be one of {sorted(self._VALID_THINKING_LEVELS)}")
 
         logger.info(
             f"Initialized GeminiProvider: model={model}, "
-            f"thinking={enable_thinking}, budget={thinking_budget}"
+            f"fallback_model={self.fallback_model}, "
+            f"thinking={enable_thinking}, level={thinking_level}, store={store}"
         )
 
     async def generate(self, user_message: str) -> LLMResponse:
@@ -75,160 +109,298 @@ class GeminiProvider(BaseLLMProvider):
         logger.debug(f"Generating response for message: {user_message[:100]}...")
         self.add_to_history(LLMMessage(role="user", content=user_message))
 
-        # Build generation config
-        config = self._build_generation_config()
+        request_params = self._build_request_params(model=self.model)
+        try:
+            return await self._generate_complete(request_params)
+        except Exception as primary_error:
+            fallback_model = self.fallback_model
+            if not fallback_model or fallback_model == self.model:
+                raise
 
-        # Build contents from history
-        contents = [
-            types.Content(role=msg.role, parts=[types.Part(text=msg.content)])
-            for msg in self.conversation_history
-        ]
-
-        return await self._generate_complete(contents, config)
+            retryable = not isinstance(primary_error, NonRetryableGeminiError)
+            logger.warning(
+                (
+                    "Primary Gemini model failed; retrying with fallback model. "
+                    "primary=%s fallback=%s retryable=%s error_type=%s error=%s"
+                ),
+                self.model,
+                fallback_model,
+                retryable,
+                type(primary_error).__name__,
+                primary_error,
+            )
+            fallback_request_params = self._build_request_params(model=fallback_model)
+            try:
+                return await self._generate_complete(fallback_request_params)
+            except Exception as fallback_error:
+                logger.error(
+                    (
+                        "Fallback Gemini model failed. primary=%s fallback=%s "
+                        "error_type=%s error=%s"
+                    ),
+                    self.model,
+                    fallback_model,
+                    type(fallback_error).__name__,
+                    fallback_error,
+                )
+                raise
 
     async def generate_stream(self, user_message: str) -> AsyncGenerator[str, None]:
         """
-        Generate streaming Gemini response.
+        Generate Gemini response as a single chunk.
 
         Args:
             user_message: User's input
 
         Yields:
-            Text chunks as they become available
+            Full response content in one chunk
 
         Raises:
-            Exception: If streaming fails
+            Exception: If generation fails
         """
-        logger.debug(f"Streaming response for message: {user_message[:100]}...")
-        self.add_to_history(LLMMessage(role="user", content=user_message))
+        logger.warning("Gemini streaming is deferred; returning a single response chunk.")
+        response = await self.generate(user_message)
+        yield response.content
 
-        # Build generation config
-        config = self._build_generation_config()
-
-        # Build contents from history
-        contents = [
-            types.Content(role=msg.role, parts=[types.Part(text=msg.content)])
-            for msg in self.conversation_history
-        ]
-
-        async for chunk in self._generate_stream(contents, config):
-            yield chunk
-
-    async def _generate_complete(
-        self, contents: list[types.Content], config: types.GenerateContentConfig
-    ) -> LLMResponse:
+    @retry(
+        stop=stop_after_attempt(3),
+        wait=wait_exponential(multiplier=1, min=2, max=10),
+        retry=retry_if_not_exception_type(NonRetryableGeminiError),
+        reraise=True,
+    )
+    async def _generate_complete(self, request_params: dict[str, Any]) -> LLMResponse:
         """
-        Generate complete response.
+        Generate complete response with automatic retry logic.
+
+        Automatically retries on transient API failures with exponential backoff:
+        - Maximum 3 attempts
+        - Exponential backoff: 2s → 4s → 8s (capped at 10s)
+        - Re-raises exception after exhausting retries
 
         Args:
-            contents: Conversation contents
-            config: Generation configuration
+            request_params: Interactions API request parameters
 
         Returns:
             LLMResponse with content and metadata
 
         Raises:
-            Exception: If generation fails
+            Exception: If generation fails after max retries
         """
         try:
-            response = await self.client.aio.models.generate_content(
-                model=self.model, contents=contents, config=config
-            )
-
-            # Extract content (handle thinking mode output)
-            if self.enable_thinking and hasattr(response, "parts"):
-                # Thinking mode returns multiple parts: thoughts + answer
-                content_parts = []
-                for part in response.candidates[0].content.parts:
-                    if hasattr(part, "text"):
-                        content_parts.append(part.text)
-                content = "\n".join(content_parts).strip()
-            else:
-                content = response.text.strip()
+            interaction = await self.client.aio.interactions.create(**request_params)
+            content = self._extract_text_from_outputs(getattr(interaction, "outputs", None))
 
             self.add_to_history(LLMMessage(role="assistant", content=content))
 
+            usage = self._extract_usage(getattr(interaction, "usage", None))
+            finish_reason = self._extract_finish_reason(interaction)
+
             logger.info(
-                f"Generated response: {response.usage_metadata.prompt_token_count} "
-                f"input tokens, {response.usage_metadata.candidates_token_count} "
-                f"output tokens"
+                "Generated response: %s input tokens, %s output tokens",
+                usage.get("input_tokens") if usage else None,
+                usage.get("output_tokens") if usage else None,
             )
+
+            # Extract thought summaries if thinking is enabled
+            thought_summaries = []
+            if self.enable_thinking:
+                thought_summaries = self._extract_thought_summaries(
+                    getattr(interaction, "outputs", None)
+                )
 
             return LLMResponse(
                 content=content,
-                finish_reason=str(response.candidates[0].finish_reason),
-                usage={
-                    "input_tokens": response.usage_metadata.prompt_token_count,
-                    "output_tokens": response.usage_metadata.candidates_token_count,
-                    "total_tokens": response.usage_metadata.total_token_count,
-                },
+                finish_reason=finish_reason,
+                usage=usage,
                 metadata={
+                    "model": request_params.get("model", self.model),
+                    "interaction_id": getattr(interaction, "id", None),
                     "thinking_enabled": self.enable_thinking,
-                    "thinking_budget": (self.thinking_budget if self.enable_thinking else None),
+                    "thinking_level": (self.thinking_level if self.enable_thinking else None),
+                    "thought_summaries": thought_summaries,
+                    "response_format_enabled": self.response_format is not None,
+                    "store": self.store,
                 },
             )
 
         except Exception as e:
-            logger.error(f"Error in _generate_complete: {e}")
+            model = request_params.get("model", self.model)
+            if self._is_non_retryable_error(e):
+                logger.warning(
+                    "Non-retryable Gemini error. model=%s error_type=%s error=%s",
+                    model,
+                    type(e).__name__,
+                    e,
+                )
+                raise NonRetryableGeminiError(str(e)) from e
+
+            logger.error("Retryable Gemini error. model=%s error_type=%s error=%s", model, type(e).__name__, e)
             raise
 
-    async def _generate_stream(
-        self, contents: list[types.Content], config: types.GenerateContentConfig
-    ) -> AsyncGenerator[str, None]:
+    def _is_non_retryable_error(self, error: Exception) -> bool:
+        """Return True when the error should not be retried."""
+        return self._is_quota_exhaustion_error(error)
+
+    @classmethod
+    def _is_quota_exhaustion_error(cls, error: Exception) -> bool:
+        """Detect quota-exhaustion errors that retries cannot fix."""
+        message = str(error).lower()
+        if "429" not in message:
+            return False
+        return any(hint in message for hint in cls._NON_RETRYABLE_QUOTA_HINTS)
+
+    def _build_request_params(self, model: str | None = None) -> dict[str, Any]:
         """
-        Stream response chunks.
-
-        Args:
-            contents: Conversation contents
-            config: Generation configuration
-
-        Yields:
-            Text chunks as they become available
-
-        Raises:
-            Exception: If streaming fails
+        Build Interactions API request parameters.
         """
-        full_response = []
+        request_params: dict[str, Any] = {
+            "model": model or self.model,
+            "input": self._build_interaction_input(),
+            "system_instruction": self.system_prompt,
+            "generation_config": self._build_generation_config(),
+            "store": self.store,
+        }
 
-        try:
-            async for chunk in self.client.aio.models.generate_content_stream(
-                model=self.model, contents=contents, config=config
-            ):
-                if chunk.text:
-                    full_response.append(chunk.text)
-                    yield chunk.text
+        # Interactions API supports response_format as a top-level param
+        if self.response_format is not None:
+            request_params["response_format"] = self.response_format
 
-            # Add complete response to history
-            complete_text = "".join(full_response)
-            self.add_to_history(LLMMessage(role="assistant", content=complete_text))
+        return request_params
 
-            logger.info(f"Streamed response complete: {len(complete_text)} chars")
+    def _build_interaction_input(self) -> list[dict[str, Any]]:
+        """
+        Build Interactions API input payload from conversation history.
+        """
+        turns: list[dict[str, Any]] = []
+        for message in self.conversation_history:
+            if message.role == "assistant":
+                turns.append(
+                    {
+                        "role": "model",
+                        "content": [{"type": "text", "text": message.content}],
+                    }
+                )
+            else:
+                turns.append({"role": "user", "content": message.content})
+        return turns
 
-        except Exception as e:
-            logger.error(f"Error in _generate_stream: {e}")
-            raise
-
-    def _build_generation_config(self) -> types.GenerateContentConfig:
+    def _build_generation_config(self) -> dict[str, Any]:
         """
         Build generation config with thinking mode support.
 
         Returns:
-            GenerateContentConfig with all settings
+            Dictionary with generation settings
         """
-        config_dict = {
-            "system_instruction": self.system_prompt,
+        config_dict: dict[str, Any] = {
             "temperature": self.temperature,
             "max_output_tokens": self.max_tokens,
         }
 
-        # Add thinking config if enabled (Gemini 2.5+ only)
-        if self.enable_thinking and "2.5" in self.model:
-            config_dict["thinking_config"] = types.ThinkingConfig(
-                thinking_budget=self.thinking_budget,
-                include_thoughts=True,  # Include thought summaries in response
-            )
+        # Add thinking config if enabled
+        if self.enable_thinking:
+            config_dict["thinking_level"] = self.thinking_level
+            config_dict["thinking_summaries"] = "auto"
 
-        return types.GenerateContentConfig(**config_dict)
+        return config_dict
+
+    @staticmethod
+    def _get_value(obj: Any, key: str) -> Any:
+        if obj is None:
+            return None
+        if isinstance(obj, dict):
+            return obj.get(key)
+        return getattr(obj, key, None)
+
+    def _extract_usage(self, usage: Any) -> dict[str, int] | None:
+        if usage is None:
+            return None
+        total_input = self._get_value(usage, "total_input_tokens")
+        total_output = self._get_value(usage, "total_output_tokens")
+        total_tokens = self._get_value(usage, "total_tokens")
+        thoughts_tokens = self._get_value(usage, "thoughts_token_count")
+
+        usage_dict: dict[str, int] = {}
+        if total_input is not None:
+            usage_dict["input_tokens"] = int(total_input)
+        if total_output is not None:
+            usage_dict["output_tokens"] = int(total_output)
+        if total_tokens is not None:
+            usage_dict["total_tokens"] = int(total_tokens)
+        elif total_input is not None and total_output is not None:
+            usage_dict["total_tokens"] = int(total_input) + int(total_output)
+        if thoughts_tokens is not None:
+            usage_dict["thoughts_token_count"] = int(thoughts_tokens)
+
+        return usage_dict or None
+
+    def _extract_text_from_outputs(self, outputs: Any) -> str:
+        """
+        Extract text content from outputs, excluding thought summaries.
+
+        Only extracts text parts that are not marked as thoughts.
+        """
+        if outputs is None:
+            return ""
+        items = outputs if isinstance(outputs, list) else [outputs]
+        parts: list[str] = []
+        for output in items:
+            # Skip thought outputs - only extract actual response text
+            output_type = self._get_value(output, "type")
+            if output_type == "thought":
+                continue
+
+            text = self._get_value(output, "text")
+            if text is None:
+                content = self._get_value(output, "content")
+                if isinstance(content, list):
+                    for item in content:
+                        # Skip thought parts in content
+                        item_type = self._get_value(item, "type")
+                        if item_type == "thought":
+                            continue
+                        item_text = self._get_value(item, "text")
+                        if isinstance(item_text, str) and item_text:
+                            parts.append(item_text)
+                    continue
+                text = content
+            if isinstance(text, str) and text:
+                parts.append(text)
+        return "\n".join(parts).strip()
+
+    def _extract_thought_summaries(self, outputs: Any) -> list[str]:
+        """
+        Extract thought summaries from outputs.
+
+        Returns:
+            List of thought summary strings
+        """
+        thoughts = []
+        if outputs is None:
+            return thoughts
+
+        items = outputs if isinstance(outputs, list) else [outputs]
+        for output in items:
+            # Check if this output is a thought
+            if self._get_value(output, "type") == "thought":
+                summary = self._get_value(output, "summary")
+                if summary:
+                    thoughts.append(str(summary))
+                # Also check text field as fallback
+                elif text := self._get_value(output, "text"):
+                    thoughts.append(str(text))
+
+        return thoughts
+
+    def _extract_finish_reason(self, interaction: Any) -> str | None:
+        outputs = self._get_value(interaction, "outputs")
+        if not outputs:
+            return None
+        items = outputs if isinstance(outputs, list) else [outputs]
+        for output in items:
+            reason = self._get_value(output, "finish_reason")
+            if reason:
+                return str(reason)
+        return None
 
     async def send_system_message(self, message: str) -> None:
         """

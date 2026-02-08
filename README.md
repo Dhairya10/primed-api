@@ -1,6 +1,8 @@
-# PM Interview Prep Platform - Backend
+# Primed - Backend
 
 FastAPI-based backend for the Primed app.
+
+The front-end app code can be found [here](https://github.com/Dhairya10/primed-app)
 
 ## Tech Stack
 
@@ -11,7 +13,6 @@ FastAPI-based backend for the Primed app.
 - **Pytest** - Testing framework
 - **Ruff** - Linting and formatting
 - **Opik** - Agent Tracking and Evaluation
-- **LiveKit** - Voice Agent using LiveAPI
 
 ## Prerequisites
 

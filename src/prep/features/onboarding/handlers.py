@@ -2,55 +2,60 @@
 
 import logging
 
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, Request, status
 
-from src.prep.auth.dependencies import get_current_user
-from src.prep.auth.models import JWTUser
-from src.prep.database import get_query_builder
 from src.prep.features.onboarding.models import (
     UserProfileRequest,
     UserProfileResponse,
     UserProfileUpdateResponse,
 )
 from src.prep.services import PostHogService
+from src.prep.services.auth.dependencies import get_current_user
+from src.prep.services.auth.models import JWTUser
+from src.prep.services.database import get_query_builder
+from src.prep.services.rate_limiter import default_rate_limit, write_rate_limit
 
 logger = logging.getLogger(__name__)
 
 
 async def initialize_user_skill_scores(user_id: str) -> None:
     """
-    Eagerly populate all skills with score=0 after onboarding.
+    Initialize skill scores for a new user (atomic upsert to prevent duplicates).
 
     Creates user_skill_scores records for all skills in the database,
-    initializing each with a score of 0. This ensures consistent queries
-    and simplifies the skill map UI (no null checks needed).
+    initializing each with a score of 0. Uses atomic upsert to handle
+    concurrent calls safely and prevent duplicate records.
 
     Args:
         user_id: UUID of the user completing onboarding
 
     Raises:
-        Exception: If database insert fails
+        Exception: If database operation fails
     """
     try:
         db = get_query_builder()
 
         # Get all skills from the database
-        skills_response = db.client.from_("skills").select("id").execute()
+        skills = db.list_records("skills")
 
-        if not skills_response.data:
+        if not skills:
             logger.warning("No skills found in database - skipping skill score initialization")
             return
 
-        # Prepare records for bulk insert
-        records = [
-            {"user_id": user_id, "skill_id": skill["id"], "score": 0.0}
-            for skill in skills_response.data
+        # Prepare records for batch upsert
+        skill_score_records = [
+            {"user_id": user_id, "skill_id": skill["id"], "score": 0.0} for skill in skills
         ]
 
-        # Bulk insert all skill scores
-        db.client.from_("user_skill_scores").insert(records).execute()
+        # Use atomic batch upsert to prevent duplicates from concurrent calls
+        # ON CONFLICT (user_id, skill_id) DO UPDATE ensures idempotency
+        db.upsert_records(
+            table="user_skill_scores",
+            records=skill_score_records,
+            conflict_columns=["user_id", "skill_id"],
+        )
 
-        logger.info(f"Initialized {len(records)} skill scores for user {user_id} (all set to 0.0)")
+        logger.info(f"Initialized {len(skill_score_records)} skill scores for user {user_id}")
 
     except Exception as e:
         logger.error(f"Failed to initialize skill scores for user {user_id}: {e}")
@@ -61,7 +66,9 @@ router = APIRouter(prefix="/profile", tags=["onboarding"])
 
 
 @router.get("/me", response_model=UserProfileResponse)
+@default_rate_limit
 async def get_user_profile(
+    request: Request,
     current_user: JWTUser = Depends(get_current_user),
 ) -> UserProfileResponse:
     """
@@ -86,49 +93,60 @@ async def get_user_profile(
     try:
         db = get_query_builder()
 
-        # Try to get existing profile
-        profile_data = db.list_records(
-            "user_profile", filters={"user_id": str(current_user.id)}, limit=1
+        # Try to fetch existing profile first
+        profile_data = db.get_by_field(
+            table="user_profile",
+            field="user_id",
+            value=str(current_user.id),
         )
 
-        # If profile exists, return it
-        if profile_data:
-            return UserProfileResponse(**profile_data[0])
+        # If profile doesn't exist, create it (JIT provisioning)
+        if not profile_data:
+            # Extract first name with better fallback
+            full_name = current_user.user_metadata.get("full_name", "")
+            email = current_user.email or ""
 
-        # JIT Provisioning: Create profile from JWT data
-        logger.info(f"JIT: Creating profile for new user {current_user.id}")
+            # Try full_name first, then derive from email
+            first_name = None
+            if full_name and full_name.strip():
+                first_name = full_name.strip().split()[0]
+            elif email:
+                # Use email prefix as fallback (before @)
+                email_prefix = email.split("@")[0]
+                first_name = email_prefix.replace(".", " ").replace("_", " ").title()
 
-        # Extract first name from OAuth metadata (Google, etc.)
-        full_name = current_user.user_metadata.get("full_name", "")
-        first_name = full_name.split()[0] if full_name else ""
+            # Create new profile with defaults
+            profile_data = db.insert_record(
+                table="user_profile",
+                data={
+                    "user_id": str(current_user.id),
+                    "email": current_user.email,
+                    "first_name": first_name,  # May be None, now allowed
+                    "last_name": None,
+                    "discipline": None,
+                    "onboarding_completed": False,  # Only for NEW profiles
+                },
+            )
 
-        # Create new profile
-        new_profile = {
-            "user_id": str(current_user.id),
-            "email": current_user.email,
-            "first_name": first_name or None,  # None if empty string
-            "last_name": None,
-            "discipline": None,
-            "onboarding_completed": False,
-        }
+            if not profile_data:
+                raise HTTPException(
+                    status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                    detail="Failed to create profile.",
+                )
 
-        db.insert_record("user_profile", new_profile)
+            # Track JIT provisioning event
+            posthog_service = PostHogService()
+            posthog_service.capture(
+                distinct_id=str(current_user.id),
+                event="profile_created_jit",
+                properties={
+                    "email": current_user.email,
+                    "has_oauth_name": bool(first_name),
+                },
+            )
+            logger.info(f"JIT: Successfully created profile for user {current_user.id}")
 
-        # Track JIT provisioning event
-        posthog_service = PostHogService()
-        posthog_service.capture(
-            distinct_id=str(current_user.id),
-            event="profile_created_jit",
-            properties={
-                "email": current_user.email,
-                "has_oauth_name": bool(first_name),
-            },
-        )
-
-        logger.info(f"JIT: Successfully created profile for user {current_user.id}")
-
-        # Return the newly created profile
-        return UserProfileResponse(**new_profile)
+        return UserProfileResponse(**profile_data)
 
     except HTTPException:
         # Re-raise HTTP exceptions
@@ -143,8 +161,10 @@ async def get_user_profile(
 
 
 @router.put("/me", response_model=UserProfileUpdateResponse)
+@write_rate_limit
 async def update_user_profile(
-    request: UserProfileRequest,
+    request: Request,
+    req: UserProfileRequest,
     current_user: JWTUser = Depends(get_current_user),
 ) -> UserProfileUpdateResponse:
     """
@@ -167,40 +187,39 @@ async def update_user_profile(
     try:
         db = get_query_builder()
 
+        # Ensure discipline defaults to 'product' if not provided
+        discipline_value = req.discipline if req.discipline else "product"
+        is_discipline_auto_assigned = req.discipline is None
+
         # Prepare update data
         update_data = {
             "user_id": str(current_user.id),
-            "discipline": request.discipline.value,
-            "first_name": request.first_name,
+            "discipline": discipline_value,
+            "first_name": req.first_name,
         }
 
         # Set onboarding_completed based on whether discipline and first_name are provided
         # If user explicitly sets it, use that value; otherwise set to True
-        if request.onboarding_completed is not None:
-            update_data["onboarding_completed"] = request.onboarding_completed
+        if req.onboarding_completed is not None:
+            update_data["onboarding_completed"] = req.onboarding_completed
         else:
             update_data["onboarding_completed"] = True
 
-        if request.last_name is not None:
-            update_data["last_name"] = request.last_name
+        if req.last_name is not None:
+            update_data["last_name"] = req.last_name
 
-        if request.bio is not None:
-            update_data["bio"] = request.bio
+        if req.bio is not None:
+            update_data["bio"] = req.bio
 
-        # Check if profile exists
-        existing = db.list_records(
-            "user_profile", filters={"user_id": str(current_user.id)}, limit=1
+        # Atomic upsert: update if exists, create if doesn't
+        # This handles edge case where profile doesn't exist yet
+        update_data["email"] = current_user.email  # Ensure email is set
+        db.upsert_record(
+            table="user_profile",
+            record=update_data,
+            conflict_columns=["user_id"],
         )
-
-        if existing:
-            # Update existing profile
-            update_data["updated_at"] = "NOW()"
-            db.update_record("user_profile", existing[0]["id"], update_data)
-            logger.info(f"Updated profile for user {current_user.id}")
-        else:
-            # Insert new profile
-            db.insert_record("user_profile", update_data)
-            logger.info(f"Created new profile for user {current_user.id}")
+        logger.info(f"Updated/created profile for user {current_user.id}")
 
         # Initialize skill scores if this is the first time completing onboarding
         if update_data.get("onboarding_completed"):
@@ -221,6 +240,7 @@ async def update_user_profile(
                 event="onboarding_completed",
                 properties={
                     "discipline": update_data["discipline"],
+                    "discipline_auto_assigned": is_discipline_auto_assigned,
                 },
             )
 

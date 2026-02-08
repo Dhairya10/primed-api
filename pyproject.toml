@@ -15,12 +15,15 @@ dependencies = [
     "trycourier>=6.2.1",
     "posthog>=6.7.6",
     "python-multipart>=0.0.20",
+    "google-adk>=0.5.0",
     "google-genai>=1.41.0",
     "google-generativeai>=0.8.5",
     "websockets>=14.0",
-    "anthropic>=0.72.0",
-    "tenacity>=9.1.2",
     "python-jose[cryptography]>=3.5.0",
+    "opik>=1.9.99",
+    "opik-optimizer>=0.2.6",
+    "slowapi>=0.1.9",
+    "tenacity>=8.2.3",
 ]
 
 [project.optional-dependencies]

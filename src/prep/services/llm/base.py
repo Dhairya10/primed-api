@@ -31,7 +31,7 @@ class BaseLLMProvider(ABC):
     """
     Abstract base for LLM providers.
 
-    Supports: Gemini, Claude, GPT, or any future provider.
+    Currently supports Gemini. Structure allows for future provider implementations.
     """
 
     MAX_HISTORY_SIZE = 100  # Maximum conversation turns to retain
@@ -48,7 +48,7 @@ class BaseLLMProvider(ABC):
         Initialize LLM provider.
 
         Args:
-            model: Model identifier (e.g., 'claude-sonnet-4-5-20250929')
+            model: Model identifier (e.g., 'gemini-2.0-flash-exp')
             api_key: Provider API key
             system_prompt: System instruction for conversation
             temperature: Sampling temperature (0.0-1.0)

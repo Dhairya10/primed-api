@@ -27,6 +27,7 @@ venv_linux/
 env/
 ENV/
 .venv
+uv.lock
 
 # IDE
 .vscode/
@@ -54,6 +55,8 @@ Thumbs.db
 # Logs
 *.log
 
+.env.yaml
+
 
 # Local Files
 settings.local.json
@@ -71,3 +74,5 @@ migrations/
 wireframes/
 docs/
 prompts/
+scripts/
+optimization_results/

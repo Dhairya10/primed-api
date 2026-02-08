@@ -7,19 +7,19 @@ import pytest
 def sample_feedback_dict():
     """Sample feedback dictionary for testing."""
     return {
-        "overall_assessment": {
-            "interview_readiness": "interview_ready",
-            "summary": "Strong framework and structure, but needs deeper quantitative analysis.",
-        },
-        "what_worked": [
-            "Used clear framework (CIRCLES) for structuring the answer",
-            "Asked clarifying questions about the target user and constraints",
-        ],
-        "critical_gaps": [
+        "summary": "Strong framework and structure, but needs deeper quantitative analysis.",
+        "skills": [
             {
-                "issue": "Lacked quantitative analysis and metrics to support design decisions",
-                "how_to_fix": "Add specific metrics for each feature and explain how you'd measure success",
-            }
+                "skill_name": "Frameworking",
+                "evaluation": "Demonstrated",
+                "feedback": "Used a clear structure and outlined tradeoffs effectively.",
+            },
+            {
+                "skill_name": "Metrics",
+                "evaluation": "Partial",
+                "feedback": "Mentioned KPIs but lacked concrete success metrics.",
+                "improvement_suggestion": "Add specific metrics and explain how you'd measure impact.",
+            },
         ],
     }
 

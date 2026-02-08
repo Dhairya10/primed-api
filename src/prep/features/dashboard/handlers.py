@@ -1,27 +1,27 @@
-"""API handlers for dashboard endpoints."""
+"""API handlers for dashboard screen."""
 
-from uuid import UUID
+import logging
+from typing import Any
 
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, Depends, HTTPException, Query, Request
 
-from src.prep.auth.dependencies import get_current_user
-from src.prep.auth.models import JWTUser
 from src.prep.config import settings
-from src.prep.database import get_query_builder
 from src.prep.features.dashboard.validators import (
-    DashboardDrill,
-    DashboardPagination,
     DashboardSession,
     DashboardSessionsResponse,
-    DrillAttemptSummary,
-    DrillsDashboardResponse,
 )
+from src.prep.services.auth.dependencies import get_current_user
+from src.prep.services.auth.models import JWTUser
+from src.prep.services.database import get_query_builder
+from src.prep.services.rate_limiter import default_rate_limit
 
 router = APIRouter()
 
 
 @router.get("/dashboard/drills", response_model=DashboardSessionsResponse)
+@default_rate_limit
 async def get_dashboard_drills(
+    request: Request,
     search: str | None = Query(None, description="Search drill titles"),
     problem_type: str | None = Query(None, description="Filter by problem type"),
     skill_id: str | None = Query(None, description="Filter sessions that tested this skill"),
@@ -56,9 +56,7 @@ async def get_dashboard_drills(
         user_id = str(current_user.id)
 
         # Get user's profile
-        profile_data = db.list_records(
-            "user_profile", filters={"user_id": user_id}, limit=1
-        )
+        profile_data = db.list_records("user_profile", filters={"user_id": user_id}, limit=1)
 
         if not profile_data:
             raise HTTPException(
@@ -76,7 +74,9 @@ async def get_dashboard_drills(
         # Fetch all completed sessions with drill info
         all_sessions = (
             db.client.table("drill_sessions")
-            .select("id, drill_id, completed_at, skill_evaluations, drills(title, problem_type, products(logo_url))")
+            .select(
+                "id, drill_id, completed_at, duration_seconds, skill_evaluations, drills(title, problem_type, products(logo_url))"
+            )
             .eq("user_id", user_id)
             .eq("status", "completed")
             .order("completed_at", desc=True)
@@ -114,6 +114,7 @@ async def get_dashboard_drills(
                     product_logo_url=product.get("logo_url") if product else None,
                     completed_at=session["completed_at"],
                     problem_type=drill_problem_type,
+                    has_feedback=(session.get("duration_seconds") or 0) >= settings.min_feedback_duration_seconds,
                 )
             )
 
