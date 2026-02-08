@@ -163,3 +163,34 @@ async def test_generate_complete_quota_error_is_non_retryable(monkeypatch):
 
     # No tenacity retries for non-retryable quota exhaustion.
     assert attempts == 1
+
+
+def test_structured_output_uses_response_format_top_level(monkeypatch):
+    """Interactions API supports response_format as a top-level param.
+
+    response_mime_type is NOT supported and must not appear anywhere.
+    generation_config must not contain response_schema or response_mime_type.
+    """
+    schema = {"type": "object", "properties": {"summary": {"type": "string"}}}
+    monkeypatch.setattr(
+        "src.prep.services.llm.gemini.genai.Client",
+        lambda api_key: type("C", (), {"aio": None})(),
+    )
+    provider = GeminiProvider(
+        model="gemini-3-pro-preview",
+        api_key="test-key",
+        system_prompt="test",
+        response_format=schema,
+        enable_thinking=False,
+    )
+
+    params = provider._build_request_params()
+    gen_config = params["generation_config"]
+
+    # response_format at top level (supported by Interactions API)
+    assert params["response_format"] == schema
+    # response_mime_type must NOT appear anywhere
+    assert "response_mime_type" not in params
+    assert "response_mime_type" not in gen_config
+    # response_schema must NOT be in generation_config
+    assert "response_schema" not in gen_config

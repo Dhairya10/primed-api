@@ -138,64 +138,20 @@ class TestDrillRecommendation:
         """Test valid drill recommendation creation."""
         recommendation = DrillRecommendation(
             drill_id="drill-789",
-            reasoning=(
-                "This drill focuses on Communication, which is in the red zone. "
-                "The scenario involves stakeholder management, addressing a key weakness."
-            ),
-            target_skill="Communication",
-            confidence=0.85,
+            reasoning="This drill focuses on Communication, addressing a key weakness.",
         )
 
         assert recommendation.drill_id == "drill-789"
         assert "Communication" in recommendation.reasoning
-        assert recommendation.target_skill == "Communication"
-        assert 0.0 <= recommendation.confidence <= 1.0
 
-    def test_reasoning_length_bounds(self):
-        """Test reasoning has min/max length constraints."""
-        # Too short (< 50 chars)
-        with pytest.raises(ValidationError):
-            DrillRecommendation(
-                drill_id="drill-789",
-                reasoning="Too short",
-                target_skill="Communication",
-                confidence=0.85,
-            )
+    def test_json_schema_generation(self):
+        """Test JSON schema generation for LLM response_format."""
+        schema = DrillRecommendation.model_json_schema()
 
-        # Too long (> 500 chars)
-        with pytest.raises(ValidationError):
-            DrillRecommendation(
-                drill_id="drill-789",
-                reasoning="x" * 501,
-                target_skill="Communication",
-                confidence=0.85,
-            )
-
-    def test_confidence_bounds(self):
-        """Test confidence is bounded between 0.0 and 1.0."""
-        # Valid boundaries
-        DrillRecommendation(
-            drill_id="drill-789",
-            reasoning="This drill is perfect for targeting the identified weakness in communication.",
-            target_skill="Communication",
-            confidence=0.0,
-        )
-
-        DrillRecommendation(
-            drill_id="drill-789",
-            reasoning="This drill is perfect for targeting the identified weakness in communication.",
-            target_skill="Communication",
-            confidence=1.0,
-        )
-
-        # Invalid - exceeds upper bound
-        with pytest.raises(ValidationError):
-            DrillRecommendation(
-                drill_id="drill-789",
-                reasoning="This drill is perfect for targeting the identified weakness in communication.",
-                target_skill="Communication",
-                confidence=1.5,
-            )
+        assert schema["type"] == "object"
+        assert "drill_id" in schema["properties"]
+        assert "reasoning" in schema["properties"]
+        assert schema["required"] == ["drill_id", "reasoning"]
 
 
 class TestUserProfileUpdate:

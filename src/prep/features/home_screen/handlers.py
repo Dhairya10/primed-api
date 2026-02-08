@@ -307,10 +307,10 @@ async def _llm_select_drill(drills: list[dict], target_skill: dict, user_id: str
         zone = target_skill.get("zone")
         if zone == "red":
             targeting_reason = (
-                f"This skill ({target_skill['name']}) needs immediate attention (red zone)."
+                f"This skill ({target_skill['name']}) needs immediate attention"
             )
         elif zone == "yellow":
-            targeting_reason = f"This skill ({target_skill['name']}) is developing and needs practice (yellow zone)."
+            targeting_reason = f"This skill ({target_skill['name']}) is developing and needs practice"
         elif not target_skill.get("is_tested"):
             targeting_reason = f"This skill ({target_skill['name']}) hasn't been tested yet."
         else:
@@ -342,23 +342,35 @@ async def _llm_select_drill(drills: list[dict], target_skill: dict, user_id: str
         )
 
         # Initialize LLM provider
+        from src.prep.services.llm import DrillRecommendation
+
         llm = get_llm_provider(
             provider_name="gemini",
             model=settings.llm_drill_selection_model,
             system_prompt="You are an AI interview coach selecting practice drills.",
-            enable_thinking=False,  # CHANGED: Disable for JSON output
+            response_format=DrillRecommendation.model_json_schema(),
+            enable_thinking=False,
             temperature=0.7,
+            max_tokens=2048,
         )
 
         # Generate selection
         response = await llm.generate(prompt)
 
-        # Log for debugging
-        logger.info(
-            "LLM drill selection response preview (length=%d): %s",
-            len(response.content),
-            response.content[:500],
-        )
+        # Log for debugging - defensive against malformed response
+        try:
+            response_content = response.content if response.content else ""
+            logger.info(
+                "LLM drill selection response preview (length=%d): %s",
+                len(response_content),
+                response_content[:500],
+            )
+        except Exception as log_error:
+            logger.warning("Failed to log drill selection response: %s", log_error)
+
+        # Check for empty response before parsing
+        if not response.content or not response.content.strip():
+            raise ValueError("LLM returned empty response for drill selection")
 
         # Parse JSON from response (handle code blocks)
         import json
@@ -368,6 +380,10 @@ async def _llm_select_drill(drills: list[dict], target_skill: dict, user_id: str
         json_match = re.search(r"```(?:json)?\s*({.*?})\s*```", content, re.DOTALL)
         if json_match:
             content = json_match.group(1)
+
+        # Validate content before parsing
+        if not content:
+            raise ValueError("No JSON content found in LLM response for drill selection")
 
         selection = json.loads(content)
         selected_id = selection["drill_id"]

@@ -404,9 +404,13 @@ class FeedbackService:
                 continue
             if isinstance(parsed, dict):
                 return parsed
+        preview = (
+            raw_content[:200] if len(raw_content) > 200 else raw_content
+        )
         error_msg = (
             f"LLM response did not contain valid JSON (context={context}). "
-            f"Tried {len(unique_candidates)} candidates."
+            f"Tried {len(unique_candidates)} candidates. "
+            f"Raw content preview: {preview!r}"
         )
         logger.error(error_msg)
         raise ValueError(error_msg)
@@ -530,18 +534,31 @@ class FeedbackService:
                 model=settings.llm_feedback_model,
                 system_prompt="You are an expert interview coach providing structured feedback.",
                 response_format=DrillFeedback.model_json_schema(),
-                enable_thinking=False,  # CHANGED: Disable for structured output
+                enable_thinking=False,
                 temperature=0.7,
+                max_tokens=12000,
             )
 
             # Generate feedback
             response = await llm.generate(prompt)
 
-            # Log for debugging
-            model_used = response.metadata.get("model", settings.llm_feedback_model)
-            self._log_llm_response_for_debug(
-                response.content, context="feedback_generation", model_used=model_used
-            )
+            # Log for debugging - defensive against malformed response
+            try:
+                model_used = (
+                    response.metadata.get("model", settings.llm_feedback_model)
+                    if response.metadata
+                    else settings.llm_feedback_model
+                )
+                response_content = response.content if response.content else ""
+                self._log_llm_response_for_debug(
+                    response_content, context="feedback_generation", model_used=model_used
+                )
+            except Exception as log_error:
+                logger.warning("Failed to log LLM response: %s", log_error)
+
+            # Check for empty response before parsing
+            if not response.content or not response.content.strip():
+                raise ValueError("LLM returned empty response for feedback_generation")
 
             try:
                 feedback_payload = self._parse_json_response_dict(
@@ -567,11 +584,33 @@ class FeedbackService:
                         model=fallback_model,
                         system_prompt="You are an expert interview coach providing structured feedback.",
                         response_format=DrillFeedback.model_json_schema(),
-                        enable_thinking=False,  # CHANGED: Disable for structured output
+                        enable_thinking=False,
                         temperature=0.7,
+                        max_tokens=12000,
                         fallback_model=None,
                     )
                     response = await fallback_llm.generate(prompt)
+
+                    # Log fallback response
+                    try:
+                        fallback_model_used = (
+                            response.metadata.get("model", fallback_model)
+                            if response.metadata
+                            else fallback_model
+                        )
+                        self._log_llm_response_for_debug(
+                            response.content if response.content else "",
+                            context="feedback_generation_fallback",
+                            model_used=fallback_model_used,
+                        )
+                    except Exception as log_error:
+                        logger.warning("Failed to log fallback LLM response: %s", log_error)
+
+                    if not response.content or not response.content.strip():
+                        raise ValueError(
+                            "Fallback LLM returned empty response for feedback_generation"
+                        )
+
                     feedback_payload = self._parse_json_response_dict(
                         response.content, context="feedback_generation_fallback"
                     )
@@ -661,19 +700,33 @@ class FeedbackService:
                 model=settings.llm_user_summary_model,
                 system_prompt="You are an AI coach synthesizing user performance data.",
                 response_format=UserProfileUpdate.model_json_schema(),
-                enable_thinking=False,  # CHANGED: Disable for structured output
+                enable_thinking=False,
                 temperature=0.7,
+                max_tokens=4096,
             )
 
             # Generate summary
             response = await llm.generate(prompt)
 
-            # Log for debugging
-            self._log_llm_response_for_debug(
-                response.content,
-                context="user_summary",
-                model_used=response.metadata.get("model", settings.llm_user_summary_model),
-            )
+            # Log for debugging - defensive against malformed response
+            try:
+                model_used = (
+                    response.metadata.get("model", settings.llm_user_summary_model)
+                    if response.metadata
+                    else settings.llm_user_summary_model
+                )
+                response_content = response.content if response.content else ""
+                self._log_llm_response_for_debug(
+                    response_content,
+                    context="user_summary",
+                    model_used=model_used,
+                )
+            except Exception as log_error:
+                logger.warning("Failed to log LLM response for user_summary: %s", log_error)
+
+            # Check for empty response before parsing
+            if not response.content or not response.content.strip():
+                raise ValueError("LLM returned empty response for user_summary")
 
             try:
                 profile_payload = self._parse_json_response_dict(
@@ -713,11 +766,33 @@ class FeedbackService:
                         model=fallback_model,
                         system_prompt="You are an AI coach synthesizing user performance data.",
                         response_format=UserProfileUpdate.model_json_schema(),
-                        enable_thinking=False,  # CHANGED: Disable for structured output
+                        enable_thinking=False,
                         temperature=0.7,
+                        max_tokens=4096,
                         fallback_model=None,
                     )
                     fallback_response = await fallback_llm.generate(prompt)
+
+                    # Log fallback response
+                    try:
+                        fallback_model_used = (
+                            fallback_response.metadata.get("model", fallback_model)
+                            if fallback_response.metadata
+                            else fallback_model
+                        )
+                        self._log_llm_response_for_debug(
+                            fallback_response.content if fallback_response.content else "",
+                            context="user_summary_fallback",
+                            model_used=fallback_model_used,
+                        )
+                    except Exception as log_error:
+                        logger.warning(
+                            "Failed to log fallback LLM response for user_summary: %s", log_error
+                        )
+
+                    if not fallback_response.content or not fallback_response.content.strip():
+                        raise ValueError("Fallback LLM returned empty response for user_summary")
+
                     try:
                         fallback_payload = self._parse_json_response_dict(
                             fallback_response.content, context="user_summary_fallback"

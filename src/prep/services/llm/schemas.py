@@ -51,14 +51,6 @@ class DrillRecommendation(BaseModel):
     drill_id: str = Field(description="Selected drill UUID")
     reasoning: str = Field(
         description="2-3 sentence explanation for this recommendation",
-        min_length=50,
-        max_length=500,
-    )
-    target_skill: str = Field(description="Primary skill name being targeted")
-    confidence: float = Field(
-        ge=0.0,
-        le=1.0,
-        description="Confidence score (0.0-1.0) for this recommendation",
     )
 
 

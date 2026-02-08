@@ -6,7 +6,6 @@ import logging
 import os
 
 from google.adk.agents import Agent
-from google.genai import types
 
 from src.prep.config import settings
 from src.prep.services.prompts import get_prompt_manager
@@ -68,9 +67,7 @@ def create_interview_agent(drill_context: dict) -> Agent:
         model=model,
         instruction=instruction,
         tools=[end_interview],
-        generate_content_config=types.GenerateContentConfig(
-            thinking_config=types.ThinkingConfig(
-                thinking_level=types.ThinkingLevel.HIGH
-            )
-        ),
+        # NOTE: Do NOT set generate_content_config with thinking_config here.
+        # Native audio models on live connections do not reliably support
+        # thinking mode and it causes WebSocket 1011 internal errors.
     )

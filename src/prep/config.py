@@ -33,7 +33,7 @@ class Settings(BaseSettings):
     google_api_key: str = ""
 
     # ADK Voice Agent Settings
-    gemini_live_model: str = "gemini-2.5-flash-native-audio-preview-12-2025"
+    gemini_live_model: str = "gemini-2.5-flash-native-audio-preview-09-2025"
     gemini_live_voice: str = ""
     voice_session_max_duration_minutes: int = 25
     voice_session_hard_limit_minutes: int = 3

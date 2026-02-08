@@ -42,10 +42,9 @@ class GeminiProvider(BaseLLMProvider):
         api_key: str,
         system_prompt: str,
         fallback_model: str | None = None,
-        enable_thinking: bool = True,
+        enable_thinking: bool = False,
         thinking_level: str = "high",
         response_format: dict[str, Any] | None = None,
-        response_mime_type: str | None = None,
         store: bool = False,
         **kwargs,
     ):
@@ -60,7 +59,6 @@ class GeminiProvider(BaseLLMProvider):
             enable_thinking: Enable thinking mode
             thinking_level: Thinking level (minimal|low|medium|high)
             response_format: JSON schema for structured output
-            response_mime_type: Mime type for structured responses
             store: Whether to persist interaction server-side
             **kwargs: Additional config (temperature, max_tokens, etc.)
 
@@ -83,15 +81,11 @@ class GeminiProvider(BaseLLMProvider):
         self.enable_thinking = enable_thinking
         self.thinking_level = thinking_level
         self.response_format = response_format
-        self.response_mime_type = response_mime_type
         self.store = store
         self.fallback_model = (fallback_model or "").strip() or None
 
         if self.enable_thinking and self.thinking_level not in self._VALID_THINKING_LEVELS:
             raise ValueError(f"thinking_level must be one of {sorted(self._VALID_THINKING_LEVELS)}")
-
-        if self.response_format and not self.response_mime_type:
-            self.response_mime_type = "application/json"
 
         logger.info(
             f"Initialized GeminiProvider: model={model}, "
@@ -267,10 +261,9 @@ class GeminiProvider(BaseLLMProvider):
             "store": self.store,
         }
 
+        # Interactions API supports response_format as a top-level param
         if self.response_format is not None:
             request_params["response_format"] = self.response_format
-            if self.response_mime_type is not None:
-                request_params["response_mime_type"] = self.response_mime_type
 
         return request_params
 
