@@ -29,8 +29,8 @@ def create_interview_run_config(session_id: str, user_id: str) -> RunConfig:
         streaming_mode=StreamingMode.BIDI,
         response_modalities=[types.Modality.AUDIO],
         context_window_compression=types.ContextWindowCompressionConfig(
-            trigger_tokens=100000,
-            sliding_window=types.SlidingWindow(target_tokens=80000),
+            trigger_tokens=10000,
+            sliding_window=types.SlidingWindow(target_tokens=8000),
         ),
         input_audio_transcription=types.AudioTranscriptionConfig(),
         output_audio_transcription=types.AudioTranscriptionConfig(),
