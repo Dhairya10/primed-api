@@ -69,7 +69,7 @@ class SupabaseQueryBuilder:
     def list_records(
         self,
         table: str,
-        columns: str = "*",
+        columns: str | list[str] | tuple[str, ...] = "*",
         filters: dict[str, Any] | None = None,
         order_by: str | None = None,
         order_desc: bool = True,
@@ -100,7 +100,11 @@ class SupabaseQueryBuilder:
             ...     limit=20
             ... )
         """
-        query = self.client.table(table).select(columns)
+        if isinstance(columns, str):
+            query = self.client.table(table).select(columns)
+        else:
+            selected_columns = tuple(columns) or ("*",)
+            query = self.client.table(table).select(*selected_columns)
 
         if filters:
             for field, value in filters.items():

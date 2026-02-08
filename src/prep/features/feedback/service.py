@@ -164,11 +164,8 @@ class FeedbackService:
                     context=context,
                 )
             except Exception as e:
-                logger.error(f"LLM feedback generation failed: {e}")
-                db.update_record(
-                    "drill_sessions",
-                    session_id,
-                    {"status": "completed", "evaluation_error": str(e)},
+                logger.error(
+                    "LLM feedback generation failed for session %s: %s", session_id, e, exc_info=True
                 )
                 raise FeedbackEvaluationError(f"LLM feedback generation failed: {e}") from e
 
@@ -176,12 +173,7 @@ class FeedbackService:
             try:
                 validated_feedback = DrillFeedback.model_validate(feedback_dict)
             except ValidationError as e:
-                logger.error(f"Feedback validation failed: {e}")
-                db.update_record(
-                    "drill_sessions",
-                    session_id,
-                    {"status": "completed", "evaluation_error": f"Invalid schema: {e}"},
-                )
+                logger.error("Feedback validation failed for session %s: %s", session_id, e, exc_info=True)
                 raise FeedbackEvaluationError(f"Feedback validation failed: {e}") from e
 
             # 6. Validate skills against expected set
@@ -196,11 +188,7 @@ class FeedbackService:
                     f"Expected: {expected_skill_names}, "
                     f"Got: {[s.skill_name for s in validated_feedback.skills]}"
                 )
-                db.update_record(
-                    "drill_sessions",
-                    session_id,
-                    {"status": "completed", "evaluation_error": error_msg},
-                )
+                logger.error("Session %s returned no valid skill evaluations: %s", session_id, error_msg)
                 raise FeedbackEvaluationError(error_msg)
 
             # Warn if some skills missing (non-blocking)

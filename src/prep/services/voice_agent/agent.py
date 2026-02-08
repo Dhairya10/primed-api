@@ -10,6 +10,7 @@ from google.genai import types
 
 from src.prep.config import settings
 from src.prep.services.prompts import get_prompt_manager
+from src.prep.services.voice_agent.tools import end_interview
 
 logger = logging.getLogger(__name__)
 
@@ -69,7 +70,7 @@ def create_interview_agent(drill_context: dict) -> Agent:
         name="interview_coach",
         model=model,
         instruction=instruction,
-        tools=[],
+        tools=[end_interview],
         generate_content_config=types.GenerateContentConfig(
             thinking_config=types.ThinkingConfig(
                 thinking_level=types.ThinkingLevel.HIGH

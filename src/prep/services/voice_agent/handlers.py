@@ -6,6 +6,7 @@ import asyncio
 import base64
 import json
 import logging
+from contextlib import suppress
 from datetime import UTC, datetime
 from uuid import UUID
 
@@ -22,6 +23,9 @@ from src.prep.services.voice_agent.session_manager import voice_session_manager
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
+
+GEMINI_AUDIO_SESSION_HARD_LIMIT_MINUTES = 15
+SESSION_WARNING_MINUTES_BEFORE_LIMIT = 2
 
 
 # Note: slowapi does not support WebSocket rate limiting
@@ -43,7 +47,10 @@ async def voice_drill_session(
     session_data: dict | None = None
     voice_session = None
     user = None
-    timeout_task = None
+    timeout_task: asyncio.Task | None = None
+    warning_task: asyncio.Task | None = None
+    upstream_task: asyncio.Task | None = None
+    downstream_task: asyncio.Task | None = None
 
     try:
         user = await get_current_user_ws(websocket)
@@ -60,6 +67,13 @@ async def voice_drill_session(
         timeout_task = asyncio.create_task(
             _enforce_session_timeout(voice_session, settings.voice_session_max_duration_minutes)
         )
+        warning_limit_minutes = min(
+            GEMINI_AUDIO_SESSION_HARD_LIMIT_MINUTES,
+            settings.voice_session_max_duration_minutes,
+        )
+        warning_task = asyncio.create_task(
+            _send_timeout_warning(voice_session, warning_limit_minutes)
+        )
 
         run_config = create_interview_run_config(
             session_id=str(drill_session_id),
@@ -71,10 +85,22 @@ async def voice_drill_session(
         welcome_trigger = types.Content(parts=[types.Part(text="[SESSION_READY]")])
         voice_session.live_queue.send_content(welcome_trigger)
 
-        await asyncio.gather(
-            _upstream_task(websocket, voice_session),
-            _downstream_task(websocket, voice_session, run_config),
+        upstream_task = asyncio.create_task(_upstream_task(websocket, voice_session))
+        downstream_task = asyncio.create_task(_downstream_task(websocket, voice_session, run_config))
+        done, pending = await asyncio.wait(
+            {upstream_task, downstream_task},
+            return_when=asyncio.FIRST_COMPLETED,
         )
+        for task in pending:
+            task.cancel()
+        for task in pending:
+            with suppress(asyncio.CancelledError):
+                await task
+        for task in done:
+            if task.cancelled():
+                continue
+            if exc := task.exception():
+                raise exc
 
     except WebSocketDisconnect:
         logger.info("Client disconnected from session %s", drill_session_id)
@@ -82,10 +108,16 @@ async def voice_drill_session(
         logger.error("Error in voice session %s: %s", drill_session_id, e, exc_info=True)
         await _safe_send_json(websocket, {"type": "error", "message": str(e)})
     finally:
-        if timeout_task is not None:
-            timeout_task.cancel()
+        for task in (upstream_task, downstream_task, timeout_task, warning_task):
+            if task is None or task.done():
+                continue
+            task.cancel()
+            with suppress(asyncio.CancelledError):
+                await task
         if voice_session is not None and session_data is not None and user is not None:
             try:
+                session_state = await _get_adk_session_state(voice_session)
+                ended_by_agent = bool(session_state.get("ended_by_agent"))
                 result = await voice_session_manager.end_session(drill_session_id)
                 await _persist_session_result(drill_session_id, session_data, result)
 
@@ -106,6 +138,7 @@ async def voice_drill_session(
                         "duration_seconds": result["duration_seconds"],
                         "transcript_length": len(result["transcript_text"]),
                         "feedback_scheduled": result["duration_seconds"] >= settings.min_feedback_duration_seconds,
+                        "ended_by_agent": ended_by_agent,
                     },
                 )
             except Exception as e:
@@ -186,6 +219,14 @@ async def _downstream_task(websocket: WebSocket, voice_session, run_config) -> N
 
             if event.content and event.content.parts:
                 for part in event.content.parts:
+                    if part.function_response and part.function_response.name == "end_interview":
+                        logger.info(
+                            "Downstream: end_interview completed for session %s",
+                            voice_session.session_id,
+                        )
+                        voice_session.is_active = False
+                        voice_session.live_queue.close()
+                        return
                     if part.inline_data and part.inline_data.mime_type.startswith("audio/"):
                         logger.info("Downstream: Audio content found in event")
                         audio_b64 = base64.b64encode(part.inline_data.data).decode()
@@ -362,7 +403,7 @@ async def _trigger_feedback_pipeline(
         )
         logger.info("Feedback generated for session %s", session_id)
     except Exception as e:
-        logger.error("Failed to generate feedback for session %s: %s", session_id, e)
+        logger.error("Failed to generate feedback for session %s: %s", session_id, e, exc_info=True)
 
 
 async def _safe_send_json(websocket: WebSocket, payload: dict) -> None:
@@ -380,3 +421,37 @@ async def _enforce_session_timeout(voice_session, max_minutes: int) -> None:
             voice_session.live_queue.close()
     except asyncio.CancelledError:
         return
+
+
+async def _send_timeout_warning(voice_session, max_minutes: int) -> None:
+    """Send a wrap-up warning to the agent shortly before hard session limit."""
+    warning_time_seconds = (max_minutes - SESSION_WARNING_MINUTES_BEFORE_LIMIT) * 60
+    if warning_time_seconds <= 0:
+        return
+    try:
+        await asyncio.sleep(warning_time_seconds)
+        if not voice_session.is_active:
+            return
+        warning_text = (
+            f"[SYSTEM: 2 minutes remaining before hard session cutoff at {max_minutes} minutes. "
+            "Please wrap up and call end_interview.]"
+        )
+        voice_session.live_queue.send_content(types.Content(parts=[types.Part(text=warning_text)]))
+        logger.info("Sent timeout warning for session %s", voice_session.session_id)
+    except asyncio.CancelledError:
+        return
+
+
+async def _get_adk_session_state(voice_session) -> dict:
+    """Fetch ADK in-memory session state for current voice session."""
+    try:
+        adk_session = await voice_session.runner.session_service.get_session(
+            app_name="primed-interview-prep",
+            user_id=str(voice_session.user_id),
+            session_id=str(voice_session.session_id),
+        )
+        if adk_session and isinstance(adk_session.state, dict):
+            return adk_session.state
+    except Exception as e:
+        logger.warning("Unable to fetch ADK session state for %s: %s", voice_session.session_id, e)
+    return {}

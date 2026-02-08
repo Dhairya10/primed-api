@@ -79,6 +79,32 @@ class TestSupabaseQueryBuilder:
         assert len(results) == 2
         mock_client.table.assert_called_once_with("drills")
 
+    def test_list_records_accepts_column_list(self, mock_client: MagicMock) -> None:
+        """Test listing records with list-based columns uses variadic select."""
+        select_mock = mock_client.table.return_value.select
+        select_mock.return_value.execute.return_value.data = [{"feedback": {}, "completed_at": "2026-02-08"}]
+
+        builder = SupabaseQueryBuilder(mock_client)
+        results = builder.list_records(
+            "drill_sessions",
+            columns=["feedback", "completed_at"],
+            limit=None,
+        )
+
+        assert len(results) == 1
+        select_mock.assert_called_once_with("feedback", "completed_at")
+
+    def test_list_records_accepts_column_string(self, mock_client: MagicMock) -> None:
+        """Test listing records with string columns keeps single select argument."""
+        select_mock = mock_client.table.return_value.select
+        select_mock.return_value.execute.return_value.data = [{"feedback": {}}]
+
+        builder = SupabaseQueryBuilder(mock_client)
+        results = builder.list_records("drill_sessions", columns="feedback")
+
+        assert len(results) == 1
+        select_mock.assert_called_once_with("feedback")
+
     def test_count_records(self, mock_client: MagicMock) -> None:
         """Test counting records."""
         mock_client.table().select().eq().execute.return_value.count = 42
@@ -183,7 +209,7 @@ class TestSupabaseQueryBuilder:
 class TestHelperFactory:
     """Tests for helper factory function."""
 
-    @patch("src.prep.services.database.utils.get_supabase_client")
+    @patch("src.prep.services.database.utils.get_supabase_admin_client")
     def test_get_query_builder(self, mock_get_client: MagicMock) -> None:
         """Test getting query builder instance."""
         mock_client = MagicMock()
