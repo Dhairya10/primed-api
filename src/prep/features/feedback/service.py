@@ -92,6 +92,20 @@ class FeedbackService:
         logger.debug(f"Formatted prompt from local file: {local_file_path}")
         return formatted
 
+    def _log_llm_response_for_debug(
+        self, response_content: str, context: str, model_used: str
+    ) -> None:
+        """Log LLM response for debugging parsing failures."""
+        preview = response_content[:500] if len(response_content) > 500 else response_content
+        logger.info(
+            "LLM response preview for %s (model=%s, length=%d): %s",
+            context,
+            model_used,
+            len(response_content),
+            preview,
+        )
+        logger.debug("Full LLM response for %s: %s", context, response_content)
+
     @opik_track(
         name="drill_session_evaluation",
         tags=["feedback", "drill-completion"],
@@ -167,7 +181,10 @@ class FeedbackService:
                 )
             except Exception as e:
                 logger.error(
-                    "LLM feedback generation failed for session %s: %s", session_id, e, exc_info=True
+                    "LLM feedback generation failed for session %s: %s",
+                    session_id,
+                    e,
+                    exc_info=True,
                 )
                 raise FeedbackEvaluationError(f"LLM feedback generation failed: {e}") from e
 
@@ -175,7 +192,9 @@ class FeedbackService:
             try:
                 validated_feedback = DrillFeedback.model_validate(feedback_dict)
             except ValidationError as e:
-                logger.error("Feedback validation failed for session %s: %s", session_id, e, exc_info=True)
+                logger.error(
+                    "Feedback validation failed for session %s: %s", session_id, e, exc_info=True
+                )
                 raise FeedbackEvaluationError(f"Feedback validation failed: {e}") from e
 
             # 6. Validate skills against expected set
@@ -190,7 +209,9 @@ class FeedbackService:
                     f"Expected: {expected_skill_names}, "
                     f"Got: {[s.skill_name for s in validated_feedback.skills]}"
                 )
-                logger.error("Session %s returned no valid skill evaluations: %s", session_id, error_msg)
+                logger.error(
+                    "Session %s returned no valid skill evaluations: %s", session_id, error_msg
+                )
                 raise FeedbackEvaluationError(error_msg)
 
             # Warn if some skills missing (non-blocking)
@@ -352,14 +373,16 @@ class FeedbackService:
         return context
 
     @staticmethod
-    def _parse_json_response_dict(raw_content: str) -> dict:
+    def _parse_json_response_dict(raw_content: str, context: str = "unknown") -> dict:
         """Parse JSON response, including fenced JSON blocks."""
         content = raw_content.strip()
         if not content:
             raise ValueError("LLM response content is empty")
 
         candidates: list[str] = [content]
-        fenced_blocks = re.findall(r"```(?:json)?\s*(.*?)\s*```", content, flags=re.IGNORECASE | re.DOTALL)
+        fenced_blocks = re.findall(
+            r"```(?:json)?\s*(.*?)\s*```", content, flags=re.IGNORECASE | re.DOTALL
+        )
         candidates.extend(block.strip() for block in fenced_blocks if block.strip())
 
         start_index = content.find("{")
@@ -381,7 +404,12 @@ class FeedbackService:
                 continue
             if isinstance(parsed, dict):
                 return parsed
-        raise ValueError("LLM response did not contain a valid JSON object")
+        error_msg = (
+            f"LLM response did not contain valid JSON (context={context}). "
+            f"Tried {len(unique_candidates)} candidates."
+        )
+        logger.error(error_msg)
+        raise ValueError(error_msg)
 
     @staticmethod
     def _normalize_feedback_payload(payload: dict) -> dict:
@@ -502,16 +530,23 @@ class FeedbackService:
                 model=settings.llm_feedback_model,
                 system_prompt="You are an expert interview coach providing structured feedback.",
                 response_format=DrillFeedback.model_json_schema(),
-                enable_thinking=True,
-                thinking_level="high",
+                enable_thinking=False,  # CHANGED: Disable for structured output
                 temperature=0.7,
             )
 
             # Generate feedback
             response = await llm.generate(prompt)
 
+            # Log for debugging
+            model_used = response.metadata.get("model", settings.llm_feedback_model)
+            self._log_llm_response_for_debug(
+                response.content, context="feedback_generation", model_used=model_used
+            )
+
             try:
-                feedback_payload = self._parse_json_response_dict(response.content)
+                feedback_payload = self._parse_json_response_dict(
+                    response.content, context="feedback_generation"
+                )
                 normalized_feedback = self._normalize_feedback_payload(feedback_payload)
                 validated_feedback = DrillFeedback.model_validate(normalized_feedback)
             except (ValidationError, ValueError) as primary_parse_error:
@@ -532,13 +567,14 @@ class FeedbackService:
                         model=fallback_model,
                         system_prompt="You are an expert interview coach providing structured feedback.",
                         response_format=DrillFeedback.model_json_schema(),
-                        enable_thinking=True,
-                        thinking_level="high",
+                        enable_thinking=False,  # CHANGED: Disable for structured output
                         temperature=0.7,
                         fallback_model=None,
                     )
                     response = await fallback_llm.generate(prompt)
-                    feedback_payload = self._parse_json_response_dict(response.content)
+                    feedback_payload = self._parse_json_response_dict(
+                        response.content, context="feedback_generation_fallback"
+                    )
                     normalized_feedback = self._normalize_feedback_payload(feedback_payload)
                     validated_feedback = DrillFeedback.model_validate(normalized_feedback)
                 else:
@@ -625,16 +661,24 @@ class FeedbackService:
                 model=settings.llm_user_summary_model,
                 system_prompt="You are an AI coach synthesizing user performance data.",
                 response_format=UserProfileUpdate.model_json_schema(),
-                enable_thinking=True,
-                thinking_level="high",
+                enable_thinking=False,  # CHANGED: Disable for structured output
                 temperature=0.7,
             )
 
             # Generate summary
             response = await llm.generate(prompt)
 
+            # Log for debugging
+            self._log_llm_response_for_debug(
+                response.content,
+                context="user_summary",
+                model_used=response.metadata.get("model", settings.llm_user_summary_model),
+            )
+
             try:
-                profile_payload = self._parse_json_response_dict(response.content)
+                profile_payload = self._parse_json_response_dict(
+                    response.content, context="user_summary"
+                )
                 profile_update = UserProfileUpdate.model_validate(profile_payload)
                 metadata = self._build_llm_metadata(
                     response=response,
@@ -669,14 +713,15 @@ class FeedbackService:
                         model=fallback_model,
                         system_prompt="You are an AI coach synthesizing user performance data.",
                         response_format=UserProfileUpdate.model_json_schema(),
-                        enable_thinking=True,
-                        thinking_level="high",
+                        enable_thinking=False,  # CHANGED: Disable for structured output
                         temperature=0.7,
                         fallback_model=None,
                     )
                     fallback_response = await fallback_llm.generate(prompt)
                     try:
-                        fallback_payload = self._parse_json_response_dict(fallback_response.content)
+                        fallback_payload = self._parse_json_response_dict(
+                            fallback_response.content, context="user_summary_fallback"
+                        )
                         fallback_profile = UserProfileUpdate.model_validate(fallback_payload)
                         metadata = self._build_llm_metadata(
                             response=fallback_response,

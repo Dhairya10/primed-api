@@ -103,7 +103,7 @@ async def get_home_greeting(
                 detail="User profile not found.",
             )
 
-        first_name = profile[0].get("first_name", "")
+        first_name = profile[0].get("first_name") or "there"  # CHANGED: Default fallback
 
         # Count completed drill sessions
         session_count = db.count_records(
@@ -346,13 +346,19 @@ async def _llm_select_drill(drills: list[dict], target_skill: dict, user_id: str
             provider_name="gemini",
             model=settings.llm_drill_selection_model,
             system_prompt="You are an AI interview coach selecting practice drills.",
-            enable_thinking=True,
-            thinking_level="high",
+            enable_thinking=False,  # CHANGED: Disable for JSON output
             temperature=0.7,
         )
 
         # Generate selection
         response = await llm.generate(prompt)
+
+        # Log for debugging
+        logger.info(
+            "LLM drill selection response preview (length=%d): %s",
+            len(response.content),
+            response.content[:500],
+        )
 
         # Parse JSON from response (handle code blocks)
         import json

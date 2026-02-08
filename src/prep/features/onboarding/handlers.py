@@ -102,9 +102,18 @@ async def get_user_profile(
 
         # If profile doesn't exist, create it (JIT provisioning)
         if not profile_data:
-            # Extract first name from OAuth metadata
+            # Extract first name with better fallback
             full_name = current_user.user_metadata.get("full_name", "")
-            first_name = full_name.split()[0] if full_name else ""
+            email = current_user.email or ""
+
+            # Try full_name first, then derive from email
+            first_name = None
+            if full_name and full_name.strip():
+                first_name = full_name.strip().split()[0]
+            elif email:
+                # Use email prefix as fallback (before @)
+                email_prefix = email.split("@")[0]
+                first_name = email_prefix.replace(".", " ").replace("_", " ").title()
 
             # Create new profile with defaults
             profile_data = db.insert_record(
@@ -112,7 +121,7 @@ async def get_user_profile(
                 data={
                     "user_id": str(current_user.id),
                     "email": current_user.email,
-                    "first_name": first_name or None,
+                    "first_name": first_name,  # May be None, now allowed
                     "last_name": None,
                     "discipline": None,
                     "onboarding_completed": False,  # Only for NEW profiles

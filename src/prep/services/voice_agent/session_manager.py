@@ -6,6 +6,7 @@ import asyncio
 import logging
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
+from typing import Any
 from uuid import UUID
 
 from google.adk.agents import LiveRequestQueue
@@ -34,6 +35,18 @@ class VoiceSession:
 
     is_active: bool = True
     total_tokens_used: int = 0
+    error_state: dict[str, Any] | None = None
+    should_terminate: bool = False
+
+    def mark_error(self, error_code: str, error_message: str) -> None:
+        """Mark session as errored and flag for termination."""
+        self.error_state = {
+            "code": error_code,
+            "message": error_message,
+            "timestamp": datetime.now(UTC).isoformat(),
+        }
+        self.should_terminate = True
+        self.is_active = False
 
     def add_input_transcription(self, text: str, finished: bool) -> None:
         """Accumulate input transcription and finalize on finished."""

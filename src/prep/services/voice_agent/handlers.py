@@ -87,7 +87,9 @@ async def voice_drill_session(
         voice_session.live_queue.send_content(welcome_trigger)
 
         upstream_task = asyncio.create_task(_upstream_task(websocket, voice_session))
-        downstream_task = asyncio.create_task(_downstream_task(websocket, voice_session, run_config))
+        downstream_task = asyncio.create_task(
+            _downstream_task(websocket, voice_session, run_config)
+        )
         done, pending = await asyncio.wait(
             {upstream_task, downstream_task},
             return_when=asyncio.FIRST_COMPLETED,
@@ -138,13 +140,17 @@ async def voice_drill_session(
                         "type": "session_end",
                         "duration_seconds": result["duration_seconds"],
                         "transcript_length": len(result["transcript_text"]),
-                        "feedback_scheduled": result["duration_seconds"] >= settings.min_feedback_duration_seconds,
+                        "feedback_scheduled": result["duration_seconds"]
+                        >= settings.min_feedback_duration_seconds,
                         "ended_by_agent": ended_by_agent,
                     },
                 )
             except Exception as e:
                 logger.error("Error ending session: %s", e, exc_info=True)
             finally:
+                # Give runner brief moment for cleanup
+                if voice_session is not None:
+                    await asyncio.sleep(0.1)
                 voice_session.live_queue.close()
 
 
@@ -197,85 +203,105 @@ async def _downstream_task(websocket: WebSocket, voice_session, run_config) -> N
     """Receive events from ADK and forward to client."""
     runner = voice_session.runner
 
-    async for event in runner.run_live(
-        user_id=str(voice_session.user_id),
-        session_id=str(voice_session.session_id),
-        live_request_queue=voice_session.live_queue,
-        run_config=run_config,
-    ):
-        logger.info("Downstream: Received event from runner: %s", event)
-        try:
-            if event.error_code:
-                await _safe_send_json(
-                    websocket,
-                    {
-                        "type": "error",
-                        "code": event.error_code,
-                        "message": event.error_message,
-                    },
-                )
+    try:
+        async for event in runner.run_live(
+            user_id=str(voice_session.user_id),
+            session_id=str(voice_session.session_id),
+            live_request_queue=voice_session.live_queue,
+            run_config=run_config,
+        ):
+            logger.info("Downstream: Received event from runner: %s", event)
 
-            if event.usage_metadata:
-                voice_session.total_tokens_used += event.usage_metadata.total_token_count or 0
+            # Check termination flag first
+            if voice_session.should_terminate:
+                logger.info("Downstream: Terminating due to error flag")
+                return
 
-            if event.content and event.content.parts:
-                for part in event.content.parts:
-                    if part.function_response and part.function_response.name == "end_interview":
-                        logger.info(
-                            "Downstream: end_interview completed for session %s",
-                            voice_session.session_id,
-                        )
-                        voice_session.is_active = False
-                        voice_session.live_queue.close()
-                        return
-                    if part.inline_data and part.inline_data.mime_type.startswith("audio/"):
-                        logger.info("Downstream: Audio content found in event")
-                        audio_b64 = base64.b64encode(part.inline_data.data).decode()
-                        await _safe_send_json(
-                            websocket,
+            try:
+                if event.error_code:
+                    voice_session.mark_error(
+                        event.error_code, event.error_message or "Unknown error"
+                    )
+                    try:
+                        await websocket.send_json(
                             {
-                                "type": "audio",
-                                "data": audio_b64,
-                                "mime_type": part.inline_data.mime_type,
-                            },
+                                "type": "error",
+                                "code": event.error_code,
+                                "message": event.error_message,
+                            }
                         )
+                    except Exception as send_error:
+                        logger.error("Failed to send error to client: %s", send_error)
+                    return  # CRITICAL: Stop processing
 
-            if event.input_transcription:
-                voice_session.add_input_transcription(
-                    event.input_transcription.text or "",
-                    event.input_transcription.finished,
-                )
-                await _safe_send_json(
-                    websocket,
-                    {
-                        "type": "input_transcript",
-                        "text": event.input_transcription.text,
-                        "finished": event.input_transcription.finished,
-                    },
-                )
+                if event.usage_metadata:
+                    voice_session.total_tokens_used += event.usage_metadata.total_token_count or 0
 
-            if event.output_transcription:
-                voice_session.add_output_transcription(
-                    event.output_transcription.text or "",
-                    event.output_transcription.finished,
-                )
-                await _safe_send_json(
-                    websocket,
-                    {
-                        "type": "output_transcript",
-                        "text": event.output_transcription.text,
-                        "finished": event.output_transcription.finished,
-                    },
-                )
+                if event.content and event.content.parts:
+                    for part in event.content.parts:
+                        if (
+                            part.function_response
+                            and part.function_response.name == "end_interview"
+                        ):
+                            logger.info(
+                                "Downstream: end_interview completed for session %s",
+                                voice_session.session_id,
+                            )
+                            voice_session.is_active = False
+                            voice_session.live_queue.close()
+                            return
+                        if part.inline_data and part.inline_data.mime_type.startswith("audio/"):
+                            logger.info("Downstream: Audio content found in event")
+                            audio_b64 = base64.b64encode(part.inline_data.data).decode()
+                            await _safe_send_json(
+                                websocket,
+                                {
+                                    "type": "audio",
+                                    "data": audio_b64,
+                                    "mime_type": part.inline_data.mime_type,
+                                },
+                            )
 
-            if event.turn_complete:
-                await _safe_send_json(websocket, {"type": "turn_complete"})
+                if event.input_transcription:
+                    voice_session.add_input_transcription(
+                        event.input_transcription.text or "",
+                        event.input_transcription.finished,
+                    )
+                    await _safe_send_json(
+                        websocket,
+                        {
+                            "type": "input_transcript",
+                            "text": event.input_transcription.text,
+                            "finished": event.input_transcription.finished,
+                        },
+                    )
 
-            if event.interrupted:
-                await _safe_send_json(websocket, {"type": "interrupted"})
+                if event.output_transcription:
+                    voice_session.add_output_transcription(
+                        event.output_transcription.text or "",
+                        event.output_transcription.finished,
+                    )
+                    await _safe_send_json(
+                        websocket,
+                        {
+                            "type": "output_transcript",
+                            "text": event.output_transcription.text,
+                            "finished": event.output_transcription.finished,
+                        },
+                    )
 
-        except Exception as e:
-            logger.error("Error processing event: %s", e, exc_info=True)
+                if event.turn_complete:
+                    await _safe_send_json(websocket, {"type": "turn_complete"})
+
+                if event.interrupted:
+                    await _safe_send_json(websocket, {"type": "interrupted"})
+
+            except Exception as e:
+                logger.error("Error processing event: %s", e, exc_info=True)
+    except Exception as e:
+        logger.error("Downstream task fatal error: %s", e, exc_info=True)
+        voice_session.mark_error("downstream_error", str(e))
+        raise
 
 
 async def _validate_and_get_session(session_id: UUID, user_id: UUID) -> dict:
@@ -408,10 +434,16 @@ async def _trigger_feedback_pipeline(
 
 
 async def _safe_send_json(websocket: WebSocket, payload: dict) -> None:
+    """Send JSON to WebSocket with error logging."""
     try:
         await websocket.send_json(payload)
-    except Exception:
-        return
+    except Exception as e:
+        logger.warning(
+            "Failed to send JSON to WebSocket: %s, payload_type=%s",
+            e,
+            payload.get("type"),
+        )
+        raise  # Let caller handle
 
 
 async def _enforce_session_timeout(voice_session, max_minutes: int) -> None:

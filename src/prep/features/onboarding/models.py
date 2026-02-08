@@ -15,7 +15,9 @@ class UserProfileRequest(BaseModel):
         default=DisciplineType.PRODUCT,
         description="User's target discipline (defaults to 'product' if not provided)",
     )
-    first_name: str = Field(max_length=255, description="User's first name (required)")
+    first_name: str = Field(
+        min_length=1, max_length=255, description="User's first name (required)"
+    )
     last_name: str | None = Field(None, max_length=255, description="User's last name (optional)")
     onboarding_completed: bool | None = None
     bio: str | None = Field(None, max_length=500)
@@ -38,7 +40,7 @@ class UserProfileResponse(BaseModel):
     id: UUID
     user_id: UUID
     discipline: str | None = None
-    first_name: str
+    first_name: str | None = None  # CHANGED: Allow None for OAuth gaps
     last_name: str | None = None
     onboarding_completed: bool
     bio: str | None = None
