@@ -32,7 +32,7 @@ class GeminiProvider(BaseLLMProvider):
         api_key: str,
         system_prompt: str,
         fallback_model: str | None = None,
-        enable_thinking: bool = False,
+        enable_thinking: bool = True,
         thinking_level: str = "high",
         response_format: dict[str, Any] | None = None,
         response_mime_type: str | None = None,
