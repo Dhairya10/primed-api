@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import json
 import logging
-import os
 from pathlib import Path
 from typing import Any
 
@@ -12,7 +11,7 @@ from google import genai
 from opik.evaluation.metrics import base_metric, score_result
 from opik.integrations.genai import track_genai
 
-from src.prep.config import settings
+from src.prep.services.llm.api_keys import resolve_google_api_key
 from src.prep.services.optimizer.template_utils import (
     format_transcript,
     parse_json_response,
@@ -215,12 +214,7 @@ class FeedbackQuality(base_metric.BaseMetric):
 
     def _call_llm_judge(self, judge_prompt: str) -> str:
         """Call Gemini judge model and return raw text response."""
-        api_key = (
-            os.getenv("GEMINI_API_KEY")
-            or settings.gemini_api_key
-            or settings.google_api_key
-            or None
-        )
+        api_key = resolve_google_api_key()
 
         client = genai.Client(api_key=api_key) if api_key else genai.Client()
         tracked_client = track_genai(client)

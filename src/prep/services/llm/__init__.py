@@ -18,10 +18,9 @@ Usage:
     >>> response = await llm.generate("Hello")
 """
 
-import os
-
 from src.prep.config import settings
 from src.prep.features.feedback.schemas import DrillFeedback
+from src.prep.services.llm.api_keys import resolve_google_api_key
 from src.prep.services.llm.base import BaseLLMProvider
 from src.prep.services.llm.gemini import GeminiProvider
 from src.prep.services.llm.schemas import (
@@ -78,9 +77,9 @@ def get_llm_provider(
 
     provider_class = LLM_PROVIDERS[provider_name]
 
-    # Get API key from environment
+    # Get API key from environment/settings
     api_key_map = {
-        "gemini": os.getenv("GEMINI_API_KEY") or settings.gemini_api_key,
+        "gemini": resolve_google_api_key(),
     }
     api_key = api_key_map.get(provider_name)
 

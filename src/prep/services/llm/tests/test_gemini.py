@@ -6,7 +6,7 @@ from unittest.mock import AsyncMock
 import pytest
 
 from src.prep.services.llm.base import LLMResponse
-from src.prep.services.llm.gemini import GeminiProvider
+from src.prep.services.llm.gemini import GeminiProvider, NonRetryableGeminiError
 
 
 def _make_provider(monkeypatch, *, model: str = "gemini-3-pro-preview", fallback_model: str | None = None):
@@ -126,3 +126,40 @@ async def test_generate_complete_sets_model_metadata_from_request(monkeypatch):
     assert response.content == "Hello"
     assert response.metadata["model"] == "gemini-fallback"
 
+
+@pytest.mark.asyncio
+async def test_generate_falls_back_on_non_retryable_primary_error(monkeypatch):
+    provider = _make_provider(monkeypatch, fallback_model="gemini-2.5-flash")
+    attempted_models: list[str] = []
+
+    async def mock_generate_complete(request_params):
+        attempted_models.append(request_params["model"])
+        if request_params["model"] == "gemini-3-pro-preview":
+            raise NonRetryableGeminiError("quota exceeded")
+        return LLMResponse(content="fallback-ok", metadata={"model": request_params["model"]})
+
+    provider._generate_complete = AsyncMock(side_effect=mock_generate_complete)
+
+    response = await provider.generate("hello")
+
+    assert response.content == "fallback-ok"
+    assert attempted_models == ["gemini-3-pro-preview", "gemini-2.5-flash"]
+
+
+@pytest.mark.asyncio
+async def test_generate_complete_quota_error_is_non_retryable(monkeypatch):
+    provider = _make_provider(monkeypatch)
+    attempts = 0
+
+    async def create_interaction(**kwargs):
+        nonlocal attempts
+        attempts += 1
+        raise RuntimeError("Error code: 429 - quota exceeded for metric; limit: 0")
+
+    provider.client.aio.interactions.create = create_interaction
+
+    with pytest.raises(NonRetryableGeminiError):
+        await provider._generate_complete(provider._build_request_params(model="gemini-3-pro-preview"))
+
+    # No tenacity retries for non-retryable quota exhaustion.
+    assert attempts == 1

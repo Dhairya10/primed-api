@@ -1,6 +1,8 @@
 """Drill feedback evaluation service."""
 
+import json
 import logging
+import re
 from datetime import UTC, datetime
 
 from pydantic import ValidationError
@@ -349,6 +351,92 @@ class FeedbackService:
 
         return context
 
+    @staticmethod
+    def _parse_json_response_dict(raw_content: str) -> dict:
+        """Parse JSON response, including fenced JSON blocks."""
+        content = raw_content.strip()
+        if not content:
+            raise ValueError("LLM response content is empty")
+
+        candidates: list[str] = [content]
+        fenced_blocks = re.findall(r"```(?:json)?\s*(.*?)\s*```", content, flags=re.IGNORECASE | re.DOTALL)
+        candidates.extend(block.strip() for block in fenced_blocks if block.strip())
+
+        start_index = content.find("{")
+        end_index = content.rfind("}")
+        if start_index != -1 and end_index > start_index:
+            candidates.append(content[start_index : end_index + 1].strip())
+
+        unique_candidates: list[str] = []
+        seen: set[str] = set()
+        for candidate in candidates:
+            if candidate and candidate not in seen:
+                unique_candidates.append(candidate)
+                seen.add(candidate)
+
+        for candidate in unique_candidates:
+            try:
+                parsed = json.loads(candidate)
+            except json.JSONDecodeError:
+                continue
+            if isinstance(parsed, dict):
+                return parsed
+        raise ValueError("LLM response did not contain a valid JSON object")
+
+    @staticmethod
+    def _normalize_feedback_payload(payload: dict) -> dict:
+        """Normalize known enum aliases before schema validation."""
+        normalized = dict(payload)
+        skills = normalized.get("skills")
+        if not isinstance(skills, list):
+            return normalized
+
+        evaluation_aliases = {
+            "partially": "Partial",
+            "did not demonstrate": "Missed",
+            "not demonstrated": "Missed",
+        }
+
+        normalized_skills: list = []
+        for skill in skills:
+            if not isinstance(skill, dict):
+                normalized_skills.append(skill)
+                continue
+
+            normalized_skill = dict(skill)
+            evaluation = normalized_skill.get("evaluation")
+            if isinstance(evaluation, str):
+                alias = evaluation_aliases.get(evaluation.strip().lower())
+                if alias:
+                    normalized_skill["evaluation"] = alias
+            normalized_skills.append(normalized_skill)
+
+        normalized["skills"] = normalized_skills
+        return normalized
+
+    @staticmethod
+    def _is_valid_plain_text_summary(text: str) -> bool:
+        """Guardrails for accepting plain-text summary fallback."""
+        stripped = text.strip()
+        if len(stripped) < 25:
+            return False
+        if stripped.startswith(("{", "[", "```")):
+            return False
+        if not any(punct in stripped for punct in (".", "!", "?")):
+            return False
+        return True
+
+    @staticmethod
+    def _build_llm_metadata(response, default_model: str, timestamp_field: str) -> dict:
+        usage = response.usage or {}
+        return {
+            "model": response.metadata.get("model", default_model),
+            "thinking_level": response.metadata.get("thinking_level"),
+            "thought_summaries": response.metadata.get("thought_summaries", []),
+            "thinking_tokens": usage.get("thoughts_token_count", 0),
+            timestamp_field: datetime.now(UTC).isoformat(),
+        }
+
     @opik_track(
         name="generate_drill_feedback",
         tags=["llm", "feedback", "gemini"],
@@ -422,18 +510,45 @@ class FeedbackService:
             # Generate feedback
             response = await llm.generate(prompt)
 
-            # Parse structured response
-            validated_feedback = DrillFeedback.model_validate_json(response.content)
+            try:
+                feedback_payload = self._parse_json_response_dict(response.content)
+                normalized_feedback = self._normalize_feedback_payload(feedback_payload)
+                validated_feedback = DrillFeedback.model_validate(normalized_feedback)
+            except (ValidationError, ValueError) as primary_parse_error:
+                primary_model_used = response.metadata.get("model", settings.llm_feedback_model)
+                fallback_model = settings.llm_fallback_model
+                if fallback_model and fallback_model != primary_model_used:
+                    logger.warning(
+                        (
+                            "Invalid structured feedback output; retrying with explicit fallback model. "
+                            "primary_model=%s fallback_model=%s error=%s"
+                        ),
+                        primary_model_used,
+                        fallback_model,
+                        primary_parse_error,
+                    )
+                    fallback_llm = get_llm_provider(
+                        provider_name="gemini",
+                        model=fallback_model,
+                        system_prompt="You are an expert interview coach providing structured feedback.",
+                        response_format=DrillFeedback.model_json_schema(),
+                        enable_thinking=True,
+                        thinking_level="high",
+                        temperature=0.7,
+                        fallback_model=None,
+                    )
+                    response = await fallback_llm.generate(prompt)
+                    feedback_payload = self._parse_json_response_dict(response.content)
+                    normalized_feedback = self._normalize_feedback_payload(feedback_payload)
+                    validated_feedback = DrillFeedback.model_validate(normalized_feedback)
+                else:
+                    raise primary_parse_error
 
-            # Extract metadata
-            metadata = {
-                "model": response.metadata.get("model", settings.llm_feedback_model),
-                "thinking_level": response.metadata.get("thinking_level"),
-                "thought_summaries": response.metadata.get("thought_summaries", []),
-                "thinking_tokens": response.usage.get("thoughts_token_count", 0),
-                "evaluated_at": datetime.now(UTC).isoformat(),
-            }
-
+            metadata = self._build_llm_metadata(
+                response=response,
+                default_model=settings.llm_feedback_model,
+                timestamp_field="evaluated_at",
+            )
             return validated_feedback.model_dump(), metadata
 
         except Exception as e:
@@ -518,19 +633,68 @@ class FeedbackService:
             # Generate summary
             response = await llm.generate(prompt)
 
-            # Parse structured response
-            profile_update = UserProfileUpdate.model_validate_json(response.content)
+            try:
+                profile_payload = self._parse_json_response_dict(response.content)
+                profile_update = UserProfileUpdate.model_validate(profile_payload)
+                metadata = self._build_llm_metadata(
+                    response=response,
+                    default_model=settings.llm_user_summary_model,
+                    timestamp_field="updated_at",
+                )
+                return profile_update.summary, metadata
+            except (ValidationError, ValueError) as primary_parse_error:
+                summary_text = response.content.strip()
+                if self._is_valid_plain_text_summary(summary_text):
+                    metadata = self._build_llm_metadata(
+                        response=response,
+                        default_model=settings.llm_user_summary_model,
+                        timestamp_field="updated_at",
+                    )
+                    return summary_text, metadata
 
-            # Extract metadata
-            metadata = {
-                "model": response.metadata.get("model", settings.llm_user_summary_model),
-                "thinking_level": response.metadata.get("thinking_level"),
-                "thought_summaries": response.metadata.get("thought_summaries", []),
-                "thinking_tokens": response.usage.get("thoughts_token_count", 0),
-                "updated_at": datetime.now(UTC).isoformat(),
-            }
+                primary_model_used = response.metadata.get("model", settings.llm_user_summary_model)
+                fallback_model = settings.llm_fallback_model
+                if fallback_model and fallback_model != primary_model_used:
+                    logger.warning(
+                        (
+                            "Invalid structured user-summary output; retrying with explicit fallback model. "
+                            "primary_model=%s fallback_model=%s error=%s"
+                        ),
+                        primary_model_used,
+                        fallback_model,
+                        primary_parse_error,
+                    )
+                    fallback_llm = get_llm_provider(
+                        provider_name="gemini",
+                        model=fallback_model,
+                        system_prompt="You are an AI coach synthesizing user performance data.",
+                        response_format=UserProfileUpdate.model_json_schema(),
+                        enable_thinking=True,
+                        thinking_level="high",
+                        temperature=0.7,
+                        fallback_model=None,
+                    )
+                    fallback_response = await fallback_llm.generate(prompt)
+                    try:
+                        fallback_payload = self._parse_json_response_dict(fallback_response.content)
+                        fallback_profile = UserProfileUpdate.model_validate(fallback_payload)
+                        metadata = self._build_llm_metadata(
+                            response=fallback_response,
+                            default_model=settings.llm_user_summary_model,
+                            timestamp_field="updated_at",
+                        )
+                        return fallback_profile.summary, metadata
+                    except (ValidationError, ValueError):
+                        fallback_summary = fallback_response.content.strip()
+                        if self._is_valid_plain_text_summary(fallback_summary):
+                            metadata = self._build_llm_metadata(
+                                response=fallback_response,
+                                default_model=settings.llm_user_summary_model,
+                                timestamp_field="updated_at",
+                            )
+                            return fallback_summary, metadata
 
-            return profile_update.summary, metadata
+                raise primary_parse_error
 
         except Exception as e:
             logger.error(f"User summary extraction failed: {e}", exc_info=True)

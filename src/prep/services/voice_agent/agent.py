@@ -17,17 +17,14 @@ logger = logging.getLogger(__name__)
 
 def _ensure_genai_env() -> None:
     """Ensure Google GenAI environment variables are set for ADK."""
-    if "GOOGLE_API_KEY" not in os.environ:
-        api_key = settings.google_api_key or settings.gemini_api_key
+    google_env = os.getenv("GOOGLE_API_KEY", "").strip()
+
+    if not google_env:
+        api_key = settings.google_api_key.strip()
         if api_key:
             os.environ["GOOGLE_API_KEY"] = api_key
         else:
-            logger.warning("GOOGLE_API_KEY is not set; ADK may fail to authenticate")
-
-    if "GOOGLE_GENAI_USE_VERTEXAI" not in os.environ:
-        os.environ["GOOGLE_GENAI_USE_VERTEXAI"] = (
-            "TRUE" if settings.google_genai_use_vertexai else "FALSE"
-        )
+            logger.warning("No Google GenAI API key is configured; ADK may fail to authenticate")
 
 
 def create_interview_agent(drill_context: dict) -> Agent:

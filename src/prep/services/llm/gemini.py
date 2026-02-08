@@ -5,12 +5,16 @@ from collections.abc import AsyncGenerator
 from typing import Any
 
 from google import genai
-from tenacity import retry, stop_after_attempt, wait_exponential
+from tenacity import retry, retry_if_not_exception_type, stop_after_attempt, wait_exponential
 
 from src.prep.config import settings
 from src.prep.services.llm.base import BaseLLMProvider, LLMMessage, LLMResponse
 
 logger = logging.getLogger(__name__)
+
+
+class NonRetryableGeminiError(RuntimeError):
+    """Signals errors that should bypass tenacity retries."""
 
 
 class GeminiProvider(BaseLLMProvider):
@@ -25,6 +29,12 @@ class GeminiProvider(BaseLLMProvider):
     """
 
     _VALID_THINKING_LEVELS = {"minimal", "low", "medium", "high"}
+    _NON_RETRYABLE_QUOTA_HINTS = (
+        "quota exceeded",
+        "limit: 0",
+        "generate_requests_per_model_per_day",
+        "resource_exhausted",
+    )
 
     def __init__(
         self,
@@ -113,14 +123,33 @@ class GeminiProvider(BaseLLMProvider):
             if not fallback_model or fallback_model == self.model:
                 raise
 
+            retryable = not isinstance(primary_error, NonRetryableGeminiError)
             logger.warning(
-                "Primary Gemini model failed; retrying with fallback model. primary=%s fallback=%s error=%s",
+                (
+                    "Primary Gemini model failed; retrying with fallback model. "
+                    "primary=%s fallback=%s retryable=%s error_type=%s error=%s"
+                ),
                 self.model,
                 fallback_model,
+                retryable,
+                type(primary_error).__name__,
                 primary_error,
             )
             fallback_request_params = self._build_request_params(model=fallback_model)
-            return await self._generate_complete(fallback_request_params)
+            try:
+                return await self._generate_complete(fallback_request_params)
+            except Exception as fallback_error:
+                logger.error(
+                    (
+                        "Fallback Gemini model failed. primary=%s fallback=%s "
+                        "error_type=%s error=%s"
+                    ),
+                    self.model,
+                    fallback_model,
+                    type(fallback_error).__name__,
+                    fallback_error,
+                )
+                raise
 
     async def generate_stream(self, user_message: str) -> AsyncGenerator[str, None]:
         """
@@ -142,6 +171,7 @@ class GeminiProvider(BaseLLMProvider):
     @retry(
         stop=stop_after_attempt(3),
         wait=wait_exponential(multiplier=1, min=2, max=10),
+        retry=retry_if_not_exception_type(NonRetryableGeminiError),
         reraise=True,
     )
     async def _generate_complete(self, request_params: dict[str, Any]) -> LLMResponse:
@@ -200,8 +230,30 @@ class GeminiProvider(BaseLLMProvider):
             )
 
         except Exception as e:
-            logger.error(f"Error in _generate_complete: {e}")
+            model = request_params.get("model", self.model)
+            if self._is_non_retryable_error(e):
+                logger.warning(
+                    "Non-retryable Gemini error. model=%s error_type=%s error=%s",
+                    model,
+                    type(e).__name__,
+                    e,
+                )
+                raise NonRetryableGeminiError(str(e)) from e
+
+            logger.error("Retryable Gemini error. model=%s error_type=%s error=%s", model, type(e).__name__, e)
             raise
+
+    def _is_non_retryable_error(self, error: Exception) -> bool:
+        """Return True when the error should not be retried."""
+        return self._is_quota_exhaustion_error(error)
+
+    @classmethod
+    def _is_quota_exhaustion_error(cls, error: Exception) -> bool:
+        """Detect quota-exhaustion errors that retries cannot fix."""
+        message = str(error).lower()
+        if "429" not in message:
+            return False
+        return any(hint in message for hint in cls._NON_RETRYABLE_QUOTA_HINTS)
 
     def _build_request_params(self, model: str | None = None) -> dict[str, Any]:
         """
