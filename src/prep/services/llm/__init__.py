@@ -87,6 +87,8 @@ def get_llm_provider(
     if not api_key:
         raise ValueError(f"API key not found for provider: {provider_name}")
 
+    kwargs.setdefault("fallback_model", settings.llm_fallback_model)
+
     return provider_class(model=model, api_key=api_key, system_prompt=system_prompt, **kwargs)
 
 

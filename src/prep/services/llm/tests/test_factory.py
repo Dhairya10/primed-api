@@ -93,3 +93,28 @@ def test_get_llm_provider_requires_model():
     with patch.dict(os.environ, {"GEMINI_API_KEY": "test-key"}):
         with pytest.raises(ValueError, match="Model parameter is required"):
             get_llm_provider(provider_name="gemini", system_prompt="You are helpful")
+
+
+def test_get_llm_provider_sets_configured_fallback_model():
+    """Test that configured global fallback model is passed to provider."""
+    with patch.dict(os.environ, {"GEMINI_API_KEY": "test-key"}):
+        with patch("src.prep.services.llm.settings.llm_fallback_model", "gemini-2.5-flash"):
+            provider = get_llm_provider(
+                provider_name="gemini",
+                model="gemini-3-pro-preview",
+                system_prompt="You are helpful",
+            )
+            assert provider.fallback_model == "gemini-2.5-flash"
+
+
+def test_get_llm_provider_respects_explicit_fallback_override():
+    """Test that explicit fallback_model in kwargs overrides config default."""
+    with patch.dict(os.environ, {"GEMINI_API_KEY": "test-key"}):
+        with patch("src.prep.services.llm.settings.llm_fallback_model", "gemini-2.5-flash"):
+            provider = get_llm_provider(
+                provider_name="gemini",
+                model="gemini-3-pro-preview",
+                system_prompt="You are helpful",
+                fallback_model="gemini-2.0-flash-exp",
+            )
+            assert provider.fallback_model == "gemini-2.0-flash-exp"

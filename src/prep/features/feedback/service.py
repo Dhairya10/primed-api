@@ -439,7 +439,7 @@ class FeedbackService:
 
             # Extract metadata
             metadata = {
-                "model": settings.llm_feedback_model,
+                "model": response.metadata.get("model", settings.llm_feedback_model),
                 "thinking_level": response.metadata.get("thinking_level"),
                 "thought_summaries": response.metadata.get("thought_summaries", []),
                 "thinking_tokens": response.usage.get("thoughts_token_count", 0),
@@ -535,7 +535,7 @@ class FeedbackService:
 
             # Extract metadata
             metadata = {
-                "model": settings.llm_feedback_model,
+                "model": response.metadata.get("model", settings.llm_user_summary_model),
                 "thinking_level": response.metadata.get("thinking_level"),
                 "thought_summaries": response.metadata.get("thought_summaries", []),
                 "thinking_tokens": response.usage.get("thoughts_token_count", 0),

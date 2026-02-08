@@ -31,6 +31,7 @@ class GeminiProvider(BaseLLMProvider):
         model: str,
         api_key: str,
         system_prompt: str,
+        fallback_model: str | None = None,
         enable_thinking: bool = False,
         thinking_level: str = "high",
         response_format: dict[str, Any] | None = None,
@@ -45,6 +46,7 @@ class GeminiProvider(BaseLLMProvider):
             model: Model identifier (e.g., 'gemini-2.0-flash-exp')
             api_key: Gemini API key
             system_prompt: System instruction
+            fallback_model: Optional backup model ID used when primary generation fails
             enable_thinking: Enable thinking mode
             thinking_level: Thinking level (minimal|low|medium|high)
             response_format: JSON schema for structured output
@@ -73,6 +75,7 @@ class GeminiProvider(BaseLLMProvider):
         self.response_format = response_format
         self.response_mime_type = response_mime_type
         self.store = store
+        self.fallback_model = (fallback_model or "").strip() or None
 
         if self.enable_thinking and self.thinking_level not in self._VALID_THINKING_LEVELS:
             raise ValueError(f"thinking_level must be one of {sorted(self._VALID_THINKING_LEVELS)}")
@@ -82,6 +85,7 @@ class GeminiProvider(BaseLLMProvider):
 
         logger.info(
             f"Initialized GeminiProvider: model={model}, "
+            f"fallback_model={self.fallback_model}, "
             f"thinking={enable_thinking}, level={thinking_level}, store={store}"
         )
 
@@ -101,9 +105,22 @@ class GeminiProvider(BaseLLMProvider):
         logger.debug(f"Generating response for message: {user_message[:100]}...")
         self.add_to_history(LLMMessage(role="user", content=user_message))
 
-        request_params = self._build_request_params()
+        request_params = self._build_request_params(model=self.model)
+        try:
+            return await self._generate_complete(request_params)
+        except Exception as primary_error:
+            fallback_model = self.fallback_model
+            if not fallback_model or fallback_model == self.model:
+                raise
 
-        return await self._generate_complete(request_params)
+            logger.warning(
+                "Primary Gemini model failed; retrying with fallback model. primary=%s fallback=%s error=%s",
+                self.model,
+                fallback_model,
+                primary_error,
+            )
+            fallback_request_params = self._build_request_params(model=fallback_model)
+            return await self._generate_complete(fallback_request_params)
 
     async def generate_stream(self, user_message: str) -> AsyncGenerator[str, None]:
         """
@@ -172,6 +189,7 @@ class GeminiProvider(BaseLLMProvider):
                 finish_reason=finish_reason,
                 usage=usage,
                 metadata={
+                    "model": request_params.get("model", self.model),
                     "interaction_id": getattr(interaction, "id", None),
                     "thinking_enabled": self.enable_thinking,
                     "thinking_level": (self.thinking_level if self.enable_thinking else None),
@@ -185,12 +203,12 @@ class GeminiProvider(BaseLLMProvider):
             logger.error(f"Error in _generate_complete: {e}")
             raise
 
-    def _build_request_params(self) -> dict[str, Any]:
+    def _build_request_params(self, model: str | None = None) -> dict[str, Any]:
         """
         Build Interactions API request parameters.
         """
         request_params: dict[str, Any] = {
-            "model": self.model,
+            "model": model or self.model,
             "input": self._build_interaction_input(),
             "system_instruction": self.system_prompt,
             "generation_config": self._build_generation_config(),
