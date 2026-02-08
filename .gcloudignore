@@ -1,3 +1,6 @@
+# This file tells gcloud what to exclude from the build context
+# Unlike .gitignore, we INCLUDE uv.lock because Docker needs it
+
 # Python
 __pycache__/
 *.py[cod]
@@ -27,7 +30,7 @@ venv_linux/
 env/
 ENV/
 .venv
-uv.lock
+# NOTE: uv.lock is NOT excluded - we need it for Docker builds
 
 # IDE
 .vscode/
@@ -36,10 +39,11 @@ uv.lock
 *.swo
 *~
 
-# Environment
+# Environment files
 .env
 .env.local
 .env.*.local
+.env.yaml
 
 # Testing
 .coverage
@@ -54,9 +58,6 @@ Thumbs.db
 
 # Logs
 *.log
-
-.env.yaml
-
 
 # Local Files
 settings.local.json
@@ -73,6 +74,11 @@ coverage.xml
 migrations/
 wireframes/
 docs/
-prompts/
+# prompts/ - DO NOT EXCLUDE: Contains Python code for Opik integration, not local files
 scripts/
 optimization_results/
+
+# Git files
+.git
+.gitignore
+.gcloudignore
