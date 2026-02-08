@@ -21,6 +21,7 @@ dependencies = [
     "websockets>=14.0",
     "python-jose[cryptography]>=3.5.0",
     "opik>=1.9.99",
+    "opik-optimizer>=0.2.6",
     "slowapi>=0.1.9",
     "tenacity>=8.2.3",
 ]
