@@ -24,9 +24,6 @@ from src.prep.services.voice_agent.session_manager import voice_session_manager
 logger = logging.getLogger(__name__)
 router = APIRouter()
 
-GEMINI_AUDIO_SESSION_HARD_LIMIT_MINUTES = 15
-SESSION_WARNING_MINUTES_BEFORE_LIMIT = 2
-
 
 # Note: slowapi does not support WebSocket rate limiting
 # WebSocket rate limiting would need to be implemented manually if required
@@ -68,11 +65,15 @@ async def voice_drill_session(
             _enforce_session_timeout(voice_session, settings.voice_session_max_duration_minutes)
         )
         warning_limit_minutes = min(
-            GEMINI_AUDIO_SESSION_HARD_LIMIT_MINUTES,
+            settings.voice_session_hard_limit_minutes,
             settings.voice_session_max_duration_minutes,
         )
         warning_task = asyncio.create_task(
-            _send_timeout_warning(voice_session, warning_limit_minutes)
+            _send_timeout_warning(
+                voice_session,
+                warning_limit_minutes,
+                settings.voice_session_warning_minutes_before_hard_limit,
+            )
         )
 
         run_config = create_interview_run_config(
@@ -423,9 +424,13 @@ async def _enforce_session_timeout(voice_session, max_minutes: int) -> None:
         return
 
 
-async def _send_timeout_warning(voice_session, max_minutes: int) -> None:
+async def _send_timeout_warning(
+    voice_session,
+    max_minutes: int,
+    warning_minutes_before_limit: int,
+) -> None:
     """Send a wrap-up warning to the agent shortly before hard session limit."""
-    warning_time_seconds = (max_minutes - SESSION_WARNING_MINUTES_BEFORE_LIMIT) * 60
+    warning_time_seconds = (max_minutes - warning_minutes_before_limit) * 60
     if warning_time_seconds <= 0:
         return
     try:

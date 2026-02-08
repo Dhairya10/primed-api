@@ -34,6 +34,8 @@ class Settings(BaseSettings):
     gemini_live_model: str = "gemini-2.5-flash-native-audio-preview-12-2025"
     gemini_live_voice: str = ""
     voice_session_max_duration_minutes: int = 25
+    voice_session_hard_limit_minutes: int = 15
+    voice_session_warning_minutes_before_hard_limit: int = 2
     voice_session_max_concurrent: int = 50
     min_feedback_duration_seconds: int = 120  # 2 minutes - sessions shorter than this skip feedback
 
